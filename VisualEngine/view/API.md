@@ -1,13 +1,46 @@
 # view/ — API Reference
 
-*Planned subsystem — no implementations yet.*
+The PixiJS presentation layer — owns the renderer/canvas, the camera transform, and per-frame drawing of whatever the grid reports as on-screen.
 
-Will own the **PixiJS** presentation layer — the `PIXI.Application` (renderer + stage), the render loop, and the camera that drives viewport queries against `memory/SpatialGrid`. (The web has no SpriteKit; PixiJS is the renderer.)
+Three coordinate spaces:
+- **pixel** — actual tab/canvas pixels (device/window dependent).
+- **gameMeasure** — resolution-independent logical space: the longer screen axis is always `GAME_LONG` (2000), the shorter scaled to preserve aspect. Game/camera logic lives here.
+- **world** — where entities + `SpatialGrid` live.
 
-Expected responsibilities:
-- Initialise the Pixi app and attach its canvas (replacing the placeholder `<canvas>` in `index.html`).
-- On first sight of an entity, call its `entity.circleBody(x, y)` factory (from `geometry/`), `addChild` the result to the stage, cache it, then only update `.x`/`.y` each frame.
-- Query `VisualEngine.shared.memory.worldMap` for the camera viewport and draw what's visible.
-- Keep the entity layer batched (sprites sharing one texture/atlas → ~1 draw call), separate from a terrain layer.
+> Requires PixiJS loaded as a global `PIXI` before any method that touches it.
 
-Expected entry point: `VisualEngine.shared.view` (currently unwired).
+---
+
+## `ViewSubsystem`
+**File:** `ViewSubsystem.js`
+
+Reachable as `VisualEngine.shared.view`.
+
+### Properties
+- `gameWidth`, `gameHeight` — gameMeasure dimensions (set by `measureGameSize`).
+- `app` — the `PIXI.Application` (after `createCanvas`).
+- `world` — the camera-transformed container sprites are added to.
+
+### Methods
+
+#### `measureGameSize(pxWidth?, pxHeight?) → { gameWidth, gameHeight }`
+Derives the gameMeasure dimensions from the viewport (tab) size. The longer pixel axis maps to `GAME_LONG` (2000); the shorter is `shorterPx / longerPx * 2000`, preserving aspect. Defaults to `window.innerWidth/Height`.
+
+#### `createCanvas(background = 0x1a1a1a) → Promise<PIXI.Application>`
+Creates the Pixi renderer + canvas at the viewport's pixel size and attaches it so it fills the tab with **no margins or letterboxing** (`resizeTo: window` keeps it filling on resize). Also creates the camera-transformed `world` container.
+
+#### `load(paths) → Promise<void>`
+Preloads textures into the cache so sprites show immediately. Call once at boot.
+
+#### `draw(grid, camera)`
+Draws one frame: queries `grid` for entities inside the `camera` world rect, creates/positions a sprite per visible entity (caching it on `entity.display`), and hides sprites that left the view. `camera` is `{ x, y, width, height }` in **world units**; its aspect should match the screen or art will stretch. Allocation-free per frame (reused query buffer + cull sets).
+
+### Notes
+- Sprites are placed at world coordinates inside `world`; the `world` container's scale/position implements the camera, mapping world → pixels.
+- Each sprite's `rotation` is set from `entity.angle` (radians) — visual only.
+- A sprite is scaled so its drawn diameter matches the entity's collision diameter (`2 × collisionRadius`).
+- Missing/not-yet-loaded textures fall back to `PIXI.Texture.WHITE` — preload real art with `load()`.
+
+### Still needed to spawn a mob on screen
+- PixiJS loaded + a boot script in `index.html`.
+- An entity manager / `spawn` that creates an `Entity`, inserts it into `VisualEngine.shared.memory.worldMap`, and calls `draw` each tick.

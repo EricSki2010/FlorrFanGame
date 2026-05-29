@@ -1,5 +1,6 @@
 import { MemorySubsystem } from "./memory/MemorySubsystem.js";
 import { GeometrySubsystem } from "./geometry/GeometrySubsystem.js";
+import { ViewSubsystem } from "./view/ViewSubsystem.js";
 
 /**
  * Central reference / coordinator for the game's visual subsystem.
@@ -20,13 +21,15 @@ export class VisualEngine {
   constructor() {
     // Subsystem hooks (placeholders until each is implemented):
     //   this.shaders — filled in by files inside shaders/
-    //   this.view    — filled in by files inside view/
 
     /** World-state storage. See `memory/MemorySubsystem.js`. */
     this.memory = new MemorySubsystem();
 
     /** Drawable shape construction. See `geometry/GeometrySubsystem.js`. */
     this.geometry = new GeometrySubsystem();
+
+    /** PixiJS presentation layer. See `view/ViewSubsystem.js`. */
+    this.view = new ViewSubsystem();
   }
 
   /**

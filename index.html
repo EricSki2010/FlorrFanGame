@@ -4,16 +4,48 @@
   <meta charset="utf-8">
   <title>Florr Fan Game</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #1a1a1a; }
+    /* Fill the tab with no margins/scrollbars; Pixi appends its own canvas. */
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1a1a; }
     canvas { display: block; }
   </style>
 </head>
 <body>
-  <canvas id="game" width="800" height="600"></canvas>
+  <!-- PixiJS — exposes the global `PIXI` the view subsystem uses. -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@8/dist/pixi.min.js"></script>
 
-  <script>
-    const canvas = document.getElementById("game");
-    const ctx = canvas.getContext("2d");
+  <!-- Boot the engine. Module scripts are deferred, so PIXI is loaded by now. -->
+  <script type="module">
+    import { VisualEngine } from "./VisualEngine/VisualEngine.js";
+    import { Entity } from "./GameEngine/entities/Entity.js";
+    import { MobType, mobTexture } from "./GameEngine/entities/MobVariety.js";
+
+    const visual = VisualEngine.shared;
+    const grid = visual.memory.worldMap;
+    const view = visual.view;
+
+    // Create the renderer/canvas (fills the tab, auto-resizes).
+    await view.createCanvas();
+
+    // Preload the bee's texture so it shows immediately. If the file isn't there
+    // yet, fall back to the white placeholder rather than crashing startup.
+    try {
+      await view.load([mobTexture(MobType.BEE)]);
+    } catch (err) {
+      console.warn("texture preload failed; using placeholder:", err);
+    }
+
+    // Spawn our first mob: a bee at the world origin.
+    const bee = new Entity({ x: 0, y: 0, mobType: MobType.BEE, rarity: "super" });
+    grid.insert(bee);
+
+    // Simple camera: show `gameWidth × gameHeight` world units, centred at the
+    // origin (so the bee sits dead center). Aspect matches the screen.
+    const camera = { x: 0, y: 0, width: view.gameWidth, height: view.gameHeight };
+
+    // Render loop — draws whatever the grid reports inside the camera.
+    view.app.ticker.add(() => {
+      view.draw(grid, camera);
+    });
   </script>
 </body>
 </html>

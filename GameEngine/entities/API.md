@@ -17,7 +17,7 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 **File:** `Entity.js`
 
 ### Constructor
-- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null })` — creates an entity and its `collisionPoints` (allocated once here).
+- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0 })` — creates an entity and its `collisionPoints` (allocated once here).
   - **If `mobType` is set** (a `MobType`): this is a mob — `collisionRadius` and `texture` come from `MobVariety` (keyed by species + rarity).
   - **If `mobType` is null**: `collisionRadius` uses the generic `Entity.radiusFor(kind, rarity)` and `texture` is `null` (e.g. the player, which draws via `circleBody`).
 
@@ -27,6 +27,7 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 
 ### Properties
 - `x: number`, `y: number` — world-space center.
+- `angle: number` — facing/rotation in radians. **Visual only** — collision circles are rotation-invariant, so it never affects `collisionPoints` or `detect`. The view applies it as `sprite.rotation`.
 - `kind: string` — broad type tag (`"player"`, `"mob"`, `"petal"`, …).
 - `rarity: string` — one of `RARITY`.
 - `mobType: string | null` — mob species (a `MobType`) when this is a mob, else `null`.
@@ -40,8 +41,9 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 - `moveTo(x, y, grid)` — move an entity that is already in `grid`, keeping it in sync. Uses **remove-before-mutate** (`grid.remove` against the old points → rewrite points in place → `grid.insert`), so it allocates nothing and you can't forget to re-index.
 
 ### Notes
-- **Point coverage:** `collisionPoints` is the center plus 8 ring samples. That covers every overlapped cell only while an entity's diameter is roughly ≤ the grid cell size (the broadphase size/cell trade-off). Much larger entities would need area-filling points.
-- **Radius changes** are picked up on the next `setPosition`/`moveTo` (which rewrite points using the current radius).
+- **Point coverage:** `collisionPoints` fills the whole disk as **concentric rings** — a center point, the **edge ring** at `radius` sampled finely (every `EDGE_SPACING` = 20, since the edge is where circles actually touch), and **interior rings** every `RING_SPACING` (64) inward sampled coarsely (every `POINT_SPACING` = 100, enough for cell coverage). Because the mesh is spaced under the 128 cell size in both directions, the entity is registered in **every** cell it overlaps — including interior cells — so even entities larger than a cell (and small entities fully inside large ones) are found by broadphase. Inner rings have fewer points. Offset arrays are cached and shared by radius.
+- **Tied to cell size:** `RING_SPACING`/`POINT_SPACING` assume the 128 grid; keep both < the cell size if you change it (`cell/2` for rings is a safe choice).
+- **Radius changes** are picked up on the next `setPosition`/`moveTo`. Point *count/layout* is fixed at construction.
 
 ---
 

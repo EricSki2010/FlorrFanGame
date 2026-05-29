@@ -26,29 +26,61 @@ const DEFAULT_BASE = 12;
 /** Per-tier growth: each rarity step makes the entity this much bigger. */
 const RARITY_GROWTH = 0.12; // +12% per tier (placeholder)
 
-/**
- * Number of points sampled around the circle's edge (plus one center point).
- * Center + ring is enough to register the entity in every cell it overlaps *as
- * long as the entity's diameter is roughly ≤ the grid's cell size* (the same
- * size/cell trade-off discussed for broadphase). Much larger entities would
- * need area-filling points to be found correctly.
- */
-const RING_SAMPLES = 8;
+// Collision points fill the whole disk as CONCENTRIC RINGS, so even entities
+// larger than a grid cell are registered in EVERY cell they cover (not just the
+// edge). Coverage rule: with a 128 grid, a point lands in every overlapped cell
+// as long as the mesh is spaced < 128 in both directions.
+
+/** Radial gap between rings (≤ cell/2 → safe coverage). */
+const RING_SPACING = 64;
+
+/** Arc gap on the OUTER edge ring — kept fine, because the edge is where circles
+ * actually touch, so dense sampling there avoids grazing-contact misses. */
+const EDGE_SPACING = 20;
+
+/** Arc gap on INTERIOR rings — only needs to be < cell size for coverage, so it's
+ * much coarser (fewer points). Inner rings have smaller circumference too. */
+const POINT_SPACING = 100;
 
 /**
- * Unit-circle offsets (center + ring), computed once and shared read-only by
- * every entity. `_writePoints` scales these by the entity's radius — so moving
- * never recomputes cos/sin and never allocates.
- * @type {{dx: number, dy: number}[]}
+ * Cache of ABSOLUTE offset arrays keyed by radius. Offsets are world-space
+ * displacements from the entity's center (the radius is already baked in), so
+ * `_writePoints` just adds them to the center — no per-point multiply. Entities
+ * of the same radius share one array.
+ * @type {Map<number, {dx: number, dy: number}[]>}
  */
-const UNIT_OFFSETS = (() => {
-  const offsets = [{ dx: 0, dy: 0 }]; // center
-  for (let i = 0; i < RING_SAMPLES; i++) {
-    const a = (i / RING_SAMPLES) * TWO_PI;
-    offsets.push({ dx: Math.cos(a), dy: Math.sin(a) });
+const _offsetCache = new Map();
+
+/**
+ * Build (or fetch from cache) the concentric-ring offsets for a circle of
+ * `radius`: a center point, the edge ring at `radius` (sampled finely, every
+ * `EDGE_SPACING`), and interior rings every `RING_SPACING` inward (sampled
+ * coarsely, every `POINT_SPACING`).
+ * @param {number} radius
+ * @returns {{dx: number, dy: number}[]}
+ */
+function offsetsForRadius(radius) {
+  let offsets = _offsetCache.get(radius);
+  if (offsets !== undefined) return offsets;
+
+  offsets = [{ dx: 0, dy: 0 }]; // center — covers the entity's own center cell
+  let ringR = radius;
+  let isEdge = true; // the first (outermost) ring is the contact edge
+  while (true) {
+    const spacing = isEdge ? EDGE_SPACING : POINT_SPACING;
+    const count = Math.max(1, Math.ceil((TWO_PI * ringR) / spacing));
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * TWO_PI;
+      offsets.push({ dx: Math.cos(a) * ringR, dy: Math.sin(a) * ringR });
+    }
+    const next = ringR - RING_SPACING;
+    if (next <= RING_SPACING * 0.5) break; // center covers the innermost gap
+    ringR = next;
+    isEdge = false;
   }
+  _offsetCache.set(radius, offsets);
   return offsets;
-})();
+}
 
 /**
  * A game entity: a positioned circle with a collision radius.
@@ -76,11 +108,17 @@ export class Entity {
    *   is a mob: `collisionRadius` and `texture` come from `MobVariety`. When null,
    *   `collisionRadius` uses the generic {@link Entity.radiusFor} and there's no
    *   texture (e.g. the player draws via `circleBody`).
+   * @param {number} [opts.angle=0] Facing/rotation in radians (visual only).
    */
-  constructor({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null } = {}) {
+  constructor({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0 } = {}) {
     // Always assign the same fields in the same order → one shared hidden class.
     this.x = x;
     this.y = y;
+
+    /** Facing/rotation in radians. Visual only — collision circles are
+     * rotation-invariant, so this never affects `collisionPoints` or `detect`. */
+    this.angle = angle;
+
     this.kind = kind;
     this.rarity = rarity;
 
@@ -100,13 +138,21 @@ export class Entity {
     }
 
     /**
+     * Shared (read-only) unit offsets for this entity's size — point count
+     * scales with the radius. Cached, so same-sized entities share one array.
+     * @private
+     */
+    this._offsets = offsetsForRadius(this.collisionRadius);
+
+    /**
      * World-space points that drive grid-cell membership. Allocated ONCE here
-     * and mutated in place on every move — never reallocated. Read by the grid.
+     * (length = `_offsets.length`) and mutated in place on every move — never
+     * reallocated. Read by the grid.
      * @type {{x: number, y: number}[]}
      */
-    this.collisionPoints = UNIT_OFFSETS.map((o) => ({
-      x: x + o.dx * this.collisionRadius,
-      y: y + o.dy * this.collisionRadius,
+    this.collisionPoints = this._offsets.map((o) => ({
+      x: x + o.dx,
+      y: y + o.dy,
     }));
 
     /**
@@ -122,13 +168,15 @@ export class Entity {
    * @private
    */
   _writePoints() {
-    const r = this.collisionRadius;
+    const offs = this._offsets;
     const pts = this.collisionPoints;
-    for (let i = 0; i < UNIT_OFFSETS.length; i++) {
-      const o = UNIT_OFFSETS[i];
+    const x = this.x;
+    const y = this.y;
+    for (let i = 0; i < offs.length; i++) {
+      const o = offs[i];
       const p = pts[i];
-      p.x = this.x + o.dx * r;
-      p.y = this.y + o.dy * r;
+      p.x = x + o.dx;
+      p.y = y + o.dy;
     }
   }
 

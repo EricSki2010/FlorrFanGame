@@ -7,6 +7,13 @@
 
 import { rarityTier } from "./Rarity.js";
 
+/** Base directory for entity sprite assets — the one place to change where
+ * images are loaded from. Filenames join onto this. */
+const TEXTURE_DIR = "Assets/textures/entities";
+
+/** Build a texture path from a filename under {@link TEXTURE_DIR}. */
+const tex = (file) => `${TEXTURE_DIR}/${file}`;
+
 /**
  * Mob type "enum". JS has no native enums; a frozen object of string constants
  * is the idiomatic stand-in — the string values stay readable in logs/saves and
@@ -44,62 +51,63 @@ export function mobVariety(type) {
   switch (type) {
     case MobType.BABY_ANT:
       return {
-        texture: "textures/mobs/baby_ant.png",
-        initialSize: 7,
+        texture: tex("baby_ant.png"),
+        initialSize: 55,
         rarityScale: [1, 1.15, 1.35, 1.6, 2.0, 2.6, 3.4, 4.5],
       };
     case MobType.WORKER_ANT:
       return {
-        texture: "textures/mobs/worker_ant.png",
-        initialSize: 12,
+        texture: tex("worker_ant.png"),
+        initialSize: 75,
         rarityScale: [1, 1.18, 1.4, 1.7, 2.1, 2.8, 3.7, 5.0],
       };
     case MobType.SOLDIER_ANT:
       return {
-        texture: "textures/mobs/soldier_ant.png",
-        initialSize: 14,
+        texture: tex("soldier_ant.png"),
+        initialSize: 90,
         rarityScale: [1, 1.2, 1.45, 1.8, 2.3, 3.0, 4.0, 5.4],
       };
     case MobType.BEE:
       return {
-        texture: "textures/mobs/bee.png",
-        initialSize: 11,
+        texture: tex("bug.png"), // TEMP: using bug.png for now
+
+        initialSize: 70,
         rarityScale: [1, 1.15, 1.35, 1.65, 2.1, 2.7, 3.5, 4.6],
       };
     case MobType.HORNET:
       return {
-        texture: "textures/mobs/hornet.png",
-        initialSize: 16,
+        texture: tex("hornet.png"),
+        initialSize: 100,
         rarityScale: [1, 1.2, 1.5, 1.9, 2.4, 3.2, 4.2, 5.6],
       };
     case MobType.SPIDER:
       return {
-        texture: "textures/mobs/spider.png",
-        initialSize: 15,
+        texture: tex("spider.png"),
+        initialSize: 95,
         rarityScale: [1, 1.22, 1.5, 1.9, 2.45, 3.2, 4.3, 5.8],
       };
     case MobType.BEETLE:
       return {
-        texture: "textures/mobs/beetle.png",
-        initialSize: 18,
+        texture: tex("beetle.png"),
+        initialSize: 110,
         rarityScale: [1, 1.25, 1.6, 2.05, 2.7, 3.6, 4.8, 6.4],
       };
     case MobType.LADYBUG:
       return {
-        texture: "textures/mobs/ladybug.png",
-        initialSize: 13,
+        texture: tex("ladybug.png"),
+        initialSize: 80,
         rarityScale: [1, 1.18, 1.4, 1.75, 2.2, 2.9, 3.8, 5.1],
       };
     case MobType.ROCK:
       return {
-        texture: "textures/mobs/rock.png",
-        initialSize: 20,
+        texture: tex("rock.png"),
+        initialSize: 130,
         rarityScale: [1, 1.3, 1.7, 2.2, 2.9, 3.9, 5.2, 7.0],
       };
     default:
       return {
-        texture: "textures/mobs/unknown.png",
-        initialSize: 12,
+        texture: tex("unknown.png"),
+        initialSize: 85,
         rarityScale: [1, 1.2, 1.45, 1.75, 2.2, 2.9, 3.8, 5.0],
       };
   }
