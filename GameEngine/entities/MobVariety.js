@@ -1,0 +1,129 @@
+// Per-mob-type definitions: texture, base collision size, and how that size
+// scales across rarity tiers. This is where mob-specific data lives, keyed by
+// MobType, so Entity sizing for mobs comes from here rather than a generic
+// formula.
+//
+// (Filename is "MobVariety" — the correct spelling of variety.)
+
+import { rarityTier } from "./Rarity.js";
+
+/**
+ * Mob type "enum". JS has no native enums; a frozen object of string constants
+ * is the idiomatic stand-in — the string values stay readable in logs/saves and
+ * can't be reassigned.
+ */
+export const MobType = Object.freeze({
+  BABY_ANT: "baby_ant",
+  WORKER_ANT: "worker_ant",
+  SOLDIER_ANT: "soldier_ant",
+  BEE: "bee",
+  HORNET: "hornet",
+  SPIDER: "spider",
+  BEETLE: "beetle",
+  LADYBUG: "ladybug",
+  ROCK: "rock",
+});
+
+/**
+ * @typedef {Object} MobVariety
+ * @property {string} texture       Asset path/name for the mob's sprite.
+ * @property {number} initialSize   Collision radius at the lowest rarity.
+ * @property {number[]} rarityScale Multipliers applied to `initialSize`, indexed
+ *   by {@link RARITY} tier. Length must equal `RARITY.length`.
+ */
+
+// PLACEHOLDER data — textures, sizes, and scale curves are guesses. Tune each
+// case to your art and balance. Each `rarityScale` row is indexed by rarity:
+//                 common unusual  rare   epic  legend mythic  ultra  super
+/**
+ * Per-type definition for a mob. Add a `case` per new {@link MobType}.
+ * @param {string} type One of {@link MobType}.
+ * @returns {MobVariety}
+ */
+export function mobVariety(type) {
+  switch (type) {
+    case MobType.BABY_ANT:
+      return {
+        texture: "textures/mobs/baby_ant.png",
+        initialSize: 7,
+        rarityScale: [1, 1.15, 1.35, 1.6, 2.0, 2.6, 3.4, 4.5],
+      };
+    case MobType.WORKER_ANT:
+      return {
+        texture: "textures/mobs/worker_ant.png",
+        initialSize: 12,
+        rarityScale: [1, 1.18, 1.4, 1.7, 2.1, 2.8, 3.7, 5.0],
+      };
+    case MobType.SOLDIER_ANT:
+      return {
+        texture: "textures/mobs/soldier_ant.png",
+        initialSize: 14,
+        rarityScale: [1, 1.2, 1.45, 1.8, 2.3, 3.0, 4.0, 5.4],
+      };
+    case MobType.BEE:
+      return {
+        texture: "textures/mobs/bee.png",
+        initialSize: 11,
+        rarityScale: [1, 1.15, 1.35, 1.65, 2.1, 2.7, 3.5, 4.6],
+      };
+    case MobType.HORNET:
+      return {
+        texture: "textures/mobs/hornet.png",
+        initialSize: 16,
+        rarityScale: [1, 1.2, 1.5, 1.9, 2.4, 3.2, 4.2, 5.6],
+      };
+    case MobType.SPIDER:
+      return {
+        texture: "textures/mobs/spider.png",
+        initialSize: 15,
+        rarityScale: [1, 1.22, 1.5, 1.9, 2.45, 3.2, 4.3, 5.8],
+      };
+    case MobType.BEETLE:
+      return {
+        texture: "textures/mobs/beetle.png",
+        initialSize: 18,
+        rarityScale: [1, 1.25, 1.6, 2.05, 2.7, 3.6, 4.8, 6.4],
+      };
+    case MobType.LADYBUG:
+      return {
+        texture: "textures/mobs/ladybug.png",
+        initialSize: 13,
+        rarityScale: [1, 1.18, 1.4, 1.75, 2.2, 2.9, 3.8, 5.1],
+      };
+    case MobType.ROCK:
+      return {
+        texture: "textures/mobs/rock.png",
+        initialSize: 20,
+        rarityScale: [1, 1.3, 1.7, 2.2, 2.9, 3.9, 5.2, 7.0],
+      };
+    default:
+      return {
+        texture: "textures/mobs/unknown.png",
+        initialSize: 12,
+        rarityScale: [1, 1.2, 1.45, 1.75, 2.2, 2.9, 3.8, 5.0],
+      };
+  }
+}
+
+/**
+ * Collision radius for a mob of `type` at `rarity` — `initialSize` scaled by the
+ * type's per-rarity multiplier.
+ * @param {string} type   One of {@link MobType}.
+ * @param {string} rarity One of {@link RARITY}.
+ * @returns {number} radius in world units
+ */
+export function mobCollisionRadius(type, rarity) {
+  const v = mobVariety(type);
+  const t = rarityTier(rarity);
+  const scale = v.rarityScale[t] ?? v.rarityScale[v.rarityScale.length - 1];
+  return v.initialSize * scale;
+}
+
+/**
+ * Texture for a mob `type`.
+ * @param {string} type One of {@link MobType}.
+ * @returns {string}
+ */
+export function mobTexture(type) {
+  return mobVariety(type).texture;
+}

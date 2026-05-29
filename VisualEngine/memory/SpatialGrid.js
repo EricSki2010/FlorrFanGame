@@ -63,6 +63,23 @@ export class SpatialGrid {
      * @private
      */
     this._cells = new Map();
+
+    /**
+     * Reused scratch for `query` dedup — cleared, never returned. Safe to share
+     * because `query` is never re-entrant (it calls nothing that calls `query`).
+     * @type {Set<GridPlaceable>}
+     * @private
+     */
+    this._querySeen = new Set();
+
+    /**
+     * Reused scratch for `_uniqueCells` — cleared and refilled each call. Safe to
+     * share because the operations that use it (insert/remove/update/replace) run
+     * sequentially and each fully consumes the set before the next refill.
+     * @type {Set<string>}
+     * @private
+     */
+    this._cellScratch = new Set();
   }
 
   /**
@@ -122,9 +139,12 @@ export class SpatialGrid {
    * @returns {GridPlaceable[]} The objects that were removed.
    */
   replace(point, newObject) {
-    const removed = this.queryAt(point);
-    for (const obj of removed) {
-      this.remove(obj);
+    // Snapshot first: `queryAt` returns the live bucket, and `remove` now mutates
+    // buckets in place (swap-remove). Iterating the live array while removing from
+    // it would skip entries — so copy the references out before removing.
+    const removed = this.queryAt(point).slice();
+    for (let i = 0; i < removed.length; i++) {
+      this.remove(removed[i]);
     }
     this.insert(newObject);
     return removed;
@@ -135,29 +155,43 @@ export class SpatialGrid {
   /**
    * All objects with at least one collision point in any cell the rect overlaps.
    * Objects spanning multiple cells are returned exactly once.
+   *
+   * Allocation-free internally: the `seen` set used for dedup is reused across
+   * calls. Results are written into `out` — pass your own reused array for a
+   * zero-alloc hot path; omit it and a fresh array is returned, which is the
+   * original behaviour, so existing callers are unaffected.
+   *
    * @param {Rect} rect
-   * @returns {GridPlaceable[]}
+   * @param {GridPlaceable[]} [out] Destination array (cleared first). Defaults to
+   *   a fresh array. If you pass a reused buffer, its contents are overwritten on
+   *   the next `query` — consume them before querying again.
+   * @returns {GridPlaceable[]} `out`, filled with the results.
    */
-  query(rect) {
-    const minC = this._coord({ x: rect.x, y: rect.y });
-    const maxC = this._coord({ x: rect.x + rect.width, y: rect.y + rect.height });
+  query(rect, out = []) {
+    out.length = 0;
+    const seen = this._querySeen;
+    seen.clear();
 
-    const seen = new Set();
-    const results = [];
+    const cs = this.cellSize;
+    const minCx = Math.floor(rect.x / cs);
+    const minCy = Math.floor(rect.y / cs);
+    const maxCx = Math.floor((rect.x + rect.width) / cs);
+    const maxCy = Math.floor((rect.y + rect.height) / cs);
 
-    for (let cx = minC.x; cx <= maxC.x; cx++) {
-      for (let cy = minC.y; cy <= maxC.y; cy++) {
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cy = minCy; cy <= maxCy; cy++) {
         const bucket = this._cells.get(this._key(cx, cy));
         if (bucket === undefined) continue;
-        for (const obj of bucket) {
+        for (let i = 0; i < bucket.length; i++) {
+          const obj = bucket[i];
           if (!seen.has(obj)) {
             seen.add(obj);
-            results.push(obj);
+            out.push(obj);
           }
         }
       }
     }
-    return results;
+    return out;
   }
 
   /**
@@ -166,8 +200,7 @@ export class SpatialGrid {
    * @returns {GridPlaceable[]}
    */
   queryAt(point) {
-    const c = this._coord(point);
-    const bucket = this._cells.get(this._key(c.x, c.y));
+    const bucket = this._cells.get(this._cellKey(point.x, point.y));
     return bucket !== undefined ? bucket : [];
   }
 
@@ -179,30 +212,36 @@ export class SpatialGrid {
   }
 
   /**
+   * Cell key (`"cx,cy"`) for a world-space coordinate — floors into cell indices
+   * and joins them. The string concatenation is the one remaining per-call
+   * allocation; it's kept (over numeric key packing) so cell indices stay
+   * unbounded and negative-coordinate-safe.
    * @private
-   * @param {Point} p
-   * @returns {{x: number, y: number}}
    */
-  _coord(p) {
-    return {
-      x: Math.floor(p.x / this.cellSize),
-      y: Math.floor(p.y / this.cellSize),
-    };
+  _cellKey(worldX, worldY) {
+    return (
+      Math.floor(worldX / this.cellSize) + "," + Math.floor(worldY / this.cellSize)
+    );
   }
 
   /**
    * Distinct cell keys that contain at least one of `points`.
+   *
+   * Returns a REUSED set (`this._cellScratch`), cleared on each call — do not
+   * hold the result across another grid operation. Internal callers consume it
+   * immediately, which is why sharing it is safe.
    * @private
    * @param {Point[]} points
    * @returns {Set<string>}
    */
   _uniqueCells(points) {
-    const result = new Set();
-    for (const p of points) {
-      const c = this._coord(p);
-      result.add(this._key(c.x, c.y));
+    const set = this._cellScratch;
+    set.clear();
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      set.add(this._cellKey(p.x, p.y));
     }
-    return result;
+    return set;
   }
 
   /**
@@ -214,11 +253,16 @@ export class SpatialGrid {
     for (const key of targetKeys) {
       const bucket = this._cells.get(key);
       if (bucket === undefined) continue;
-      const filtered = bucket.filter((o) => o !== object);
-      if (filtered.length === 0) {
+      // Swap-remove in place — a cell's order doesn't matter, so overwrite the
+      // object with the last element and drop the tail. No new array. Assumes at
+      // most one occurrence per bucket, which `_uniqueCells`' dedup guarantees.
+      const i = bucket.indexOf(object);
+      if (i !== -1) {
+        bucket[i] = bucket[bucket.length - 1];
+        bucket.pop();
+      }
+      if (bucket.length === 0) {
         this._cells.delete(key);
-      } else {
-        this._cells.set(key, filtered);
       }
     }
   }

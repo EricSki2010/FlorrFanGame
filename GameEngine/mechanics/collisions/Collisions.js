@@ -51,6 +51,12 @@ export class Collisions {
 
     /** Reused output array — cleared, not reallocated, each frame. @private */
     this._results = [];
+
+    /** Reused query rect, mutated per entity instead of allocated. @private */
+    this._rect = { x: 0, y: 0, width: 0, height: 0 };
+
+    /** Reused broadphase buffer handed to `grid.query`. @private */
+    this._nearby = [];
   }
 
   /**
@@ -98,12 +104,13 @@ export class Collisions {
 
       // Broadphase: everything in A's bounding box. A big neighbour B is in many
       // cells, so it still gets found even though we only query A's own extent.
-      const nearby = grid.query({
-        x: a.x - ra,
-        y: a.y - ra,
-        width: ra * 2,
-        height: ra * 2,
-      });
+      // Reuse the rect + buffer so the sweep allocates nothing per entity.
+      const rect = this._rect;
+      rect.x = a.x - ra;
+      rect.y = a.y - ra;
+      rect.width = ra * 2;
+      rect.height = ra * 2;
+      const nearby = grid.query(rect, this._nearby);
 
       for (let j = 0; j < nearby.length; j++) {
         const b = nearby[j];
