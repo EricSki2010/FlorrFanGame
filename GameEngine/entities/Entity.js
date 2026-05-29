@@ -7,11 +7,11 @@
 // entity shares the same hidden class — keeping property access monomorphic in
 // the hot collision/AI loops.
 
-import { RARITY, rarityTier } from "./Rarity.js";
+import { Rarity, RARITY, rarityTier } from "./Rarity.js";
 import { mobCollisionRadius, mobTexture } from "./MobVariety.js";
 
-// Re-export so existing `import { RARITY } from "./Entity.js"` keeps working.
-export { RARITY };
+// Re-export so `import { Rarity, RARITY } from "./Entity.js"` keeps working.
+export { Rarity, RARITY };
 
 const TWO_PI = Math.PI * 2;
 
@@ -83,6 +83,15 @@ function offsetsForRadius(radius) {
 }
 
 /**
+ * Source of locally-generated unique entity ids. Each `new Entity` without an
+ * explicit `id` gets the next integer. NOTE: this is a unique *instance* id
+ * (this bee vs that bee) — distinct from `kind`/`mobType`, which are the species
+ * *type*. In server-authoritative multiplayer the server assigns ids; pass
+ * `{ id }` to use an authoritative one instead of the local counter.
+ */
+let _nextEntityId = 1;
+
+/**
  * A game entity: a positioned circle with a collision radius.
  */
 export class Entity {
@@ -109,9 +118,15 @@ export class Entity {
    *   `collisionRadius` uses the generic {@link Entity.radiusFor} and there's no
    *   texture (e.g. the player draws via `circleBody`).
    * @param {number} [opts.angle=0] Facing/rotation in radians (visual only).
+   * @param {number} [opts.id] Unique instance id. Defaults to a local counter;
+   *   pass one to use a server-assigned id (multiplayer).
    */
-  constructor({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0 } = {}) {
+  constructor({ x = 0, y = 0, kind = "mob", rarity = Rarity.COMMON, mobType = null, angle = 0, id = _nextEntityId++ } = {}) {
     // Always assign the same fields in the same order → one shared hidden class.
+
+    /** Unique instance id (this entity, not its species). Network-stable. */
+    this.id = id;
+
     this.x = x;
     this.y = y;
 
@@ -202,7 +217,7 @@ export class Entity {
    *
    * @param {number} x
    * @param {number} y
-   * @param {import("../../VisualEngine/memory/SpatialGrid.js").SpatialGrid} grid
+   * @param {import("../memory/SpatialGrid.js").SpatialGrid} grid
    */
   moveTo(x, y, grid) {
     grid.remove(this); // uses current points → clears the OLD cells

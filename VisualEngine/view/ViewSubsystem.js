@@ -10,6 +10,8 @@
 //
 // Requires PixiJS loaded as a global `PIXI` before any method that touches it.
 
+import { allMobTextures } from "../../GameEngine/entities/MobVariety.js";
+
 const GAME_LONG = 2000; // gameMeasure units along the longer screen axis
 
 /**
@@ -97,6 +99,15 @@ export class ViewSubsystem {
   }
 
   /**
+   * Preload ALL known game textures (every mob sprite + the fallback) into the
+   * cache. Convenience over `load(paths)` for the common "load everything at
+   * boot" case. Extend the manifest as more asset categories are added.
+   */
+  async loadTextures() {
+    await this.load(allMobTextures());
+  }
+
+  /**
    * Draw one frame: ask the grid what's inside the camera, then create/position
    * a sprite for each visible entity and hide ones that left the view.
    *
@@ -104,7 +115,7 @@ export class ViewSubsystem {
    * (e.g. width = some world span, height = width * gameHeight/gameWidth) or the
    * image will stretch.
    *
-   * @param {import("../memory/SpatialGrid.js").SpatialGrid} grid
+   * @param {import("../../GameEngine/memory/SpatialGrid.js").SpatialGrid} grid
    * @param {{ x: number, y: number, width: number, height: number }} camera
    *   World-space camera center (`x`,`y`) and size (`width`,`height`).
    */

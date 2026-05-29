@@ -16,34 +16,39 @@
   <!-- Boot the engine. Module scripts are deferred, so PIXI is loaded by now. -->
   <script type="module">
     import { VisualEngine } from "./VisualEngine/VisualEngine.js";
-    import { Entity } from "./GameEngine/entities/Entity.js";
-    import { MobType, mobTexture } from "./GameEngine/entities/MobVariety.js";
+    import { GameEngine } from "./GameEngine/GameEngine.js";
+    import { Entity, Rarity } from "./GameEngine/entities/Entity.js";
+    import { MobType } from "./GameEngine/entities/MobVariety.js";
 
     const visual = VisualEngine.shared;
-    const grid = visual.memory.worldMap;
+    const game = GameEngine.shared;
+    const grid = game.memory.worldMap; // world state lives in the game engine
     const view = visual.view;
 
     // Create the renderer/canvas (fills the tab, auto-resizes).
     await view.createCanvas();
 
-    // Preload the bee's texture so it shows immediately. If the file isn't there
-    // yet, fall back to the white placeholder rather than crashing startup.
+    // Preload all game textures. Missing files fall back to a white placeholder
+    // rather than crashing startup.
     try {
-      await view.load([mobTexture(MobType.BEE)]);
+      await view.loadTextures();
     } catch (err) {
       console.warn("texture preload failed; using placeholder:", err);
     }
 
     // Spawn our first mob: a bee at the world origin.
-    const bee = new Entity({ x: 0, y: 0, mobType: MobType.BEE, rarity: "super" });
+    const bee = new Entity({ x: 0, y: 0, mobType: MobType.BEE, rarity: Rarity.SUPER });
     grid.insert(bee);
+    const entities = [bee]; // the world's entity list (until the manager exists)
 
     // Simple camera: show `gameWidth × gameHeight` world units, centred at the
     // origin (so the bee sits dead center). Aspect matches the screen.
     const camera = { x: 0, y: 0, width: view.gameWidth, height: view.gameHeight };
 
-    // Render loop — draws whatever the grid reports inside the camera.
-    view.app.ticker.add(() => {
+    // Loop: step the simulation, then render. Pixi's ticker drives the render
+    // rate; `step` gets the frame delta in seconds.
+    view.app.ticker.add((ticker) => {
+      game.step(ticker.deltaMS / 1000, entities);
       view.draw(grid, camera);
     });
   </script>

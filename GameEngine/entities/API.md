@@ -1,6 +1,6 @@
 # entities/ — API Reference
 
-The game's entities — positioned circles that carry the data every other subsystem reads: `x`/`y` and `collisionRadius` (for `mechanics/collisions`), `collisionPoints` (for `VisualEngine`'s `SpatialGrid`), and `display` (its Pixi object, for the view).
+The game's entities — positioned circles that carry the data every other subsystem reads: `x`/`y` and `collisionRadius` (for `mechanics/collisions`), `collisionPoints` (for the game engine's `SpatialGrid`), and `display` (its Pixi object, for the view).
 
 One class with a `kind` tag rather than a deep hierarchy, so every entity shares the same hidden class — keeping property access fast in the hot collision/AI loops.
 
@@ -17,7 +17,7 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 **File:** `Entity.js`
 
 ### Constructor
-- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0 })` — creates an entity and its `collisionPoints` (allocated once here).
+- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0, id? })` — creates an entity and its `collisionPoints` (allocated once here). `id` defaults to a unique local counter; pass one for a server-assigned id.
   - **If `mobType` is set** (a `MobType`): this is a mob — `collisionRadius` and `texture` come from `MobVariety` (keyed by species + rarity).
   - **If `mobType` is null**: `collisionRadius` uses the generic `Entity.radiusFor(kind, rarity)` and `texture` is `null` (e.g. the player, which draws via `circleBody`).
 
@@ -26,6 +26,7 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 - `RARITY` (re-exported from `Rarity.js`) — rarity tiers, lowest → highest.
 
 ### Properties
+- `id: number` — unique **instance** id (this entity, not its species — distinct from `kind`/`mobType`). Network-stable; auto-assigned from a local counter, or pass `{ id }` to use a server-assigned one.
 - `x: number`, `y: number` — world-space center.
 - `angle: number` — facing/rotation in radians. **Visual only** — collision circles are rotation-invariant, so it never affects `collisionPoints` or `detect`. The view applies it as `sprite.rotation`.
 - `kind: string` — broad type tag (`"player"`, `"mob"`, `"petal"`, …).
@@ -56,6 +57,7 @@ Per-mob-species data, keyed by `MobType`.
 - `mobVariety(type) → { texture, initialSize, rarityScale }` — the `switch` returning a species' sprite texture, base collision radius, and per-rarity multiplier array (indexed by `RARITY` tier). Unknown types fall to a `default`.
 - `mobCollisionRadius(type, rarity) → number` — `initialSize × rarityScale[tier]`.
 - `mobTexture(type) → string`.
+- `allMobTextures() → string[]` — every unique mob texture path (+ fallback); the manifest the view preloads via `loadTextures()`.
 
 > All textures / sizes / scale curves are **placeholders** — tune each `case`.
 
@@ -64,18 +66,21 @@ Per-mob-species data, keyed by `MobType`.
 ## `Rarity`
 **File:** `Rarity.js`
 
-- `RARITY: string[]` — rarity tiers, lowest → highest. Index = tier.
+- `Rarity` — frozen-object "enum" of named rarity ids (`Rarity.COMMON … Rarity.SUPER`), same pattern as `MobType`. Use the constants instead of raw strings; the string values double as the ids stored on entities. (Re-exported from `Entity.js` too.)
+- `RARITY: readonly string[]` — tiers lowest → highest, derived from `Rarity`'s order. Index = tier.
 - `rarityTier(rarity) → number` — tier index, clamped (unknown rarity → 0).
+
+Raw strings still work everywhere (the enum values *are* those strings), so existing code isn't broken.
 
 ---
 
 ## Usage example
 ```js
+import { GameEngine } from "./GameEngine/GameEngine.js";
 import { Entity } from "./GameEngine/entities/Entity.js";
 import { MobType } from "./GameEngine/entities/MobVariety.js";
-import { VisualEngine } from "./VisualEngine/VisualEngine.js";
 
-const grid = VisualEngine.shared.memory.worldMap;
+const grid = GameEngine.shared.memory.worldMap;
 
 // a mob: size + texture come from MobVariety (species + rarity)
 const hornet = new Entity({ x: 100, y: 100, mobType: MobType.HORNET, rarity: "epic" });

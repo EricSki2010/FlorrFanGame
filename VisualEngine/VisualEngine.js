@@ -1,4 +1,3 @@
-import { MemorySubsystem } from "./memory/MemorySubsystem.js";
 import { GeometrySubsystem } from "./geometry/GeometrySubsystem.js";
 import { ViewSubsystem } from "./view/ViewSubsystem.js";
 
@@ -21,9 +20,9 @@ export class VisualEngine {
   constructor() {
     // Subsystem hooks (placeholders until each is implemented):
     //   this.shaders — filled in by files inside shaders/
-
-    /** World-state storage. See `memory/MemorySubsystem.js`. */
-    this.memory = new MemorySubsystem();
+    //
+    // Note: world state (the spatial grid) lives in GameEngine.memory now, not
+    // here — the view receives the grid to draw from; it doesn't own it.
 
     /** Drawable shape construction. See `geometry/GeometrySubsystem.js`. */
     this.geometry = new GeometrySubsystem();

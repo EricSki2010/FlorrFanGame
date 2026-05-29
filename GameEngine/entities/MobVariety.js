@@ -135,3 +135,15 @@ export function mobCollisionRadius(type, rarity) {
 export function mobTexture(type) {
   return mobVariety(type).texture;
 }
+
+/**
+ * Every unique mob texture path (all `MobType`s + the unknown fallback). The
+ * manifest the view preloads at boot.
+ * @returns {string[]}
+ */
+export function allMobTextures() {
+  const paths = new Set();
+  for (const type of Object.values(MobType)) paths.add(mobTexture(type));
+  paths.add(mobVariety("__fallback__").texture); // the default/unknown sprite
+  return [...paths];
+}

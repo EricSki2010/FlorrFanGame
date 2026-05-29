@@ -30,7 +30,10 @@ Derives the gameMeasure dimensions from the viewport (tab) size. The longer pixe
 Creates the Pixi renderer + canvas at the viewport's pixel size and attaches it so it fills the tab with **no margins or letterboxing** (`resizeTo: window` keeps it filling on resize). Also creates the camera-transformed `world` container.
 
 #### `load(paths) → Promise<void>`
-Preloads textures into the cache so sprites show immediately. Call once at boot.
+Preloads the given texture paths into the cache so sprites show immediately.
+
+#### `loadTextures() → Promise<void>`
+Convenience: preloads **all** known game textures (every mob sprite + the fallback, via `allMobTextures()`) — the usual "load everything at boot" call.
 
 #### `draw(grid, camera)`
 Draws one frame: queries `grid` for entities inside the `camera` world rect, creates/positions a sprite per visible entity (caching it on `entity.display`), and hides sprites that left the view. `camera` is `{ x, y, width, height }` in **world units**; its aspect should match the screen or art will stretch. Allocation-free per frame (reused query buffer + cull sets).
@@ -43,4 +46,4 @@ Draws one frame: queries `grid` for entities inside the `camera` world rect, cre
 
 ### Still needed to spawn a mob on screen
 - PixiJS loaded + a boot script in `index.html`.
-- An entity manager / `spawn` that creates an `Entity`, inserts it into `VisualEngine.shared.memory.worldMap`, and calls `draw` each tick.
+- An entity manager / `spawn` that creates an `Entity`, inserts it into `GameEngine.shared.memory.worldMap`, and calls `draw` each tick.

@@ -1,6 +1,6 @@
 # memory/ — API Reference
 
-World-state storage for the visual engine. Owns the spatial index used by camera viewport queries and collision lookups.
+Authoritative world-state storage for the **game engine**. Owns the spatial index used by collision lookups and (client-side) camera viewport queries. This is game state — the view receives the grid to draw from but doesn't own it.
 
 > Conventions: a **point** is `{ x: number, y: number }`; a **rect** is `{ x, y, width, height }` (top-left + size, DOMRect-style).
 
@@ -9,7 +9,7 @@ World-state storage for the visual engine. Owns the spatial index used by camera
 ## `MemorySubsystem`
 **File:** `MemorySubsystem.js`
 
-Wrapper that holds the live world data. Currently a thin owner of the spatial grid. Reachable as `VisualEngine.shared.memory`.
+Wrapper that holds the live world data. Currently a thin owner of the spatial grid. Reachable as `GameEngine.shared.memory`.
 
 ### Properties
 - `worldMap: SpatialGrid` — the global 2D spatial index. Everything placed in the level goes in here.

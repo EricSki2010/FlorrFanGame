@@ -86,8 +86,8 @@ export class Collisions {
    * we discussed.
    *
    * @param {CollisionEntity[]} entities The authoritative entity list to sweep.
-   * @param {import("../../../VisualEngine/memory/SpatialGrid.js").SpatialGrid} grid
-   *   The spatial index to broadphase against (e.g. `VisualEngine.shared.memory.worldMap`).
+   * @param {import("../../memory/SpatialGrid.js").SpatialGrid} grid
+   *   The spatial index to broadphase against (e.g. `GameEngine.shared.memory.worldMap`).
    * @returns {Collision[]} Colliding pairs. NOTE: this is a reused array — read
    *   it (or copy it) before the next `detect` call overwrites it.
    */

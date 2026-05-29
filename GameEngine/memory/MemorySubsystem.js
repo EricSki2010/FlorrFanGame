@@ -1,11 +1,12 @@
 import { SpatialGrid } from "./SpatialGrid.js";
 
 /**
- * World-state storage for the visual engine.
+ * Authoritative world-state storage for the game engine.
  *
- * Currently owns the `worldMap` — a {@link SpatialGrid} that indexes everything
- * placed in the level by 2D position so the camera (and other systems) can
- * quickly ask "what's inside this rect?"
+ * Owns the `worldMap` — a {@link SpatialGrid} that indexes everything placed in
+ * the world by 2D position, so collision and the (client) camera can quickly ask
+ * "what's inside this rect?". This is game state, not visual state: the view
+ * receives the grid to draw from but does not own it.
  */
 export class MemorySubsystem {
   /**

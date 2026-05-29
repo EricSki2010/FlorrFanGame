@@ -39,7 +39,7 @@ Collision system. Reachable as `GameEngine.shared.mechanics.collisions`. Holds r
 Runs one collision sweep and returns the colliding pairs.
 
 - **`entities: CollisionEntity[]`** — the authoritative entity list to sweep.
-- **`grid: SpatialGrid`** — the spatial index to broadphase against (e.g. `VisualEngine.shared.memory.worldMap`).
+- **`grid: SpatialGrid`** — the spatial index to broadphase against (e.g. `GameEngine.shared.memory.worldMap`).
 - **Returns** an array of `{ a, b }` pairs.
 
 How it works:
@@ -66,7 +66,7 @@ Optional. Turns the flat pair list into a per-entity index so you can ask "what 
 import { GameEngine } from "../../GameEngine.js";
 import { VisualEngine } from "../../../VisualEngine/VisualEngine.js";
 
-const grid = VisualEngine.shared.memory.worldMap;
+const grid = GameEngine.shared.memory.worldMap;
 const collisions = GameEngine.shared.mechanics.collisions;
 
 // each frame, after moving entities and syncing them into the grid:
