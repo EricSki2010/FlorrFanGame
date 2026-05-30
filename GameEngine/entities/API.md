@@ -6,8 +6,9 @@ One class with a `kind` tag rather than a deep hierarchy, so every entity shares
 
 Files:
 - `Entity.js` — the `Entity` class.
-- `MobVariety.js` — per-mob-species data (`MobType` enum, texture / initial size / per-rarity scale).
+- `MobVariety.js` — per-mob-species data (`MobType` enum, texture / size / density / speed / range / per-rarity scale).
 - `Rarity.js` — shared rarity tiers + `rarityTier` helper (its own module so `Entity` and `MobVariety` don't import each other).
+- `Targeting.js` — *(empty stub)* future home of targeting logic (how an entity picks its `target` point).
 
 Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entity → Rarity`.
 
@@ -17,21 +18,31 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 **File:** `Entity.js`
 
 ### Constructor
-- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0, id? })` — creates an entity and its `collisionPoints` (allocated once here). `id` defaults to a unique local counter; pass one for a server-assigned id.
+- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0, momentum = 0, direction = 0, id? })` — creates an entity and its `collisionPoints` (allocated once here). `id` defaults to a unique local counter; pass one for a server-assigned id.
   - **If `mobType` is set** (a `MobType`): this is a mob — `collisionRadius` and `texture` come from `MobVariety` (keyed by species + rarity).
   - **If `mobType` is null**: `collisionRadius` uses the generic `Entity.radiusFor(kind, rarity)` and `texture` is `null` (e.g. the player, which draws via `circleBody`).
 
 ### Static
 - `Entity.radiusFor(kind, rarity) → number` — generic sizing for **non-mob** kinds. Edit `BASE_RADIUS` / `RARITY_GROWTH` in `Entity.js` to retune. (Mobs size from `MobVariety` instead.)
 - `RARITY` (re-exported from `Rarity.js`) — rarity tiers, lowest → highest.
+- `Disposition` (exported) — frozen-object enum: `HOSTILE` / `NEUTRAL` / `PASSIVE`.
 
 ### Properties
 - `id: number` — unique **instance** id (this entity, not its species — distinct from `kind`/`mobType`). Network-stable; auto-assigned from a local counter, or pass `{ id }` to use a server-assigned one.
 - `x: number`, `y: number` — world-space center.
 - `angle: number` — facing/rotation in radians. **Visual only** — collision circles are rotation-invariant, so it never affects `collisionPoints` or `detect`. The view applies it as `sprite.rotation`.
+- `momentum: number` — intended-movement magnitude ("wanting to move"; 0 = at rest).
+- `direction: number` — intended-movement heading in radians, independent of `angle` (the visual facing). Velocity components are `momentum·cos(direction)`, `momentum·sin(direction)`.
+- `knockbackX, knockbackY: number` — per-step knockback accumulator (cartesian), kept **separate** from intended movement. Summed during collision response, applied, then cleared each step.
+- `density: number` — mass-like value driving collision push ratios (denser shoves more). Derived; rarity-scaled.
+- `speed: number` — movement magnitude applied per step toward a target. Derived; rarity-scaled.
+- `range: number` — target-detection range. Derived (mobs from `MobVariety`).
+- `target: {x, y}` — AI target **point** (always an x/y, not an entity). Reused/mutated, so retargeting allocates nothing.
+- `hasTarget: boolean` — whether `target` is currently active (movement only seeks when true).
 - `kind: string` — broad type tag (`"player"`, `"mob"`, `"petal"`, …).
 - `rarity: string` — one of `RARITY`.
 - `mobType: string | null` — mob species (a `MobType`) when this is a mob, else `null`.
+- `disposition: string` — behaviour toward the player, one of `Disposition` (`HOSTILE` / `NEUTRAL` / `PASSIVE`). Defaults to neutral.
 - `collisionRadius: number` — **derived**; from `MobVariety` for mobs, else `Entity.radiusFor`. Read every frame by collision.
 - `texture: string | null` — sprite texture (mobs) or `null` (non-mobs).
 - `collisionPoints: {x, y}[]` — points driving grid-cell membership. **Allocated once** in the constructor and **mutated in place** on every move — never reallocated, so moving stays allocation-free.
@@ -40,6 +51,10 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 ### Methods
 - `setPosition(x, y)` — set position + refresh `collisionPoints`, **without** touching any grid. Use for initial placement / spawning before insertion.
 - `moveTo(x, y, grid)` — move an entity that is already in `grid`, keeping it in sync. Uses **remove-before-mutate** (`grid.remove` against the old points → rewrite points in place → `grid.insert`), so it allocates nothing and you can't forget to re-index.
+- `addMovement(dir, magnitude)` — add a movement impulse to `momentum`/`direction` (polar add; impulses from different directions combine correctly).
+- `addKnockback(x, y)` — accumulate cartesian knockback (separate from intended movement).
+- `decayMovement(threshold, factor)` — zero `momentum` below `threshold`, else scale it by `factor` (friction).
+- `retarget(candidate)` — aim `target` at `candidate`'s point if within `range` (and not self), setting `hasTarget`; else clear `hasTarget`. Stores only the position. *Placeholder until `Targeting.js` takes over.*
 
 ### Notes
 - **Point coverage:** `collisionPoints` fills the whole disk as **concentric rings** — a center point, the **edge ring** at `radius` sampled finely (every `EDGE_SPACING` = 20, since the edge is where circles actually touch), and **interior rings** every `RING_SPACING` (64) inward sampled coarsely (every `POINT_SPACING` = 100, enough for cell coverage). Because the mesh is spaced under the 128 cell size in both directions, the entity is registered in **every** cell it overlaps — including interior cells — so even entities larger than a cell (and small entities fully inside large ones) are found by broadphase. Inner rings have fewer points. Offset arrays are cached and shared by radius.
@@ -55,7 +70,11 @@ Per-mob-species data, keyed by `MobType`.
 
 - `MobType` — frozen-object "enum" of species (`BABY_ANT`, `HORNET`, `ROCK`, …).
 - `mobVariety(type) → { texture, initialSize, rarityScale }` — the `switch` returning a species' sprite texture, base collision radius, and per-rarity multiplier array (indexed by `RARITY` tier). Unknown types fall to a `default`.
+- `mobVariety(type) → { texture, initialSize, density, speed, range, rarityScale }`.
 - `mobCollisionRadius(type, rarity) → number` — `initialSize × rarityScale[tier]`.
+- `mobDensity(type, rarity) → number` — base density, rarity-scaled (denser at higher tiers).
+- `mobSpeed(type, rarity) → number` — base speed, rarity-scaled.
+- `mobRange(type) → number` — target-detection range (not rarity-scaled).
 - `mobTexture(type) → string`.
 - `allMobTextures() → string[]` — every unique mob texture path (+ fallback); the manifest the view preloads via `loadTextures()`.
 

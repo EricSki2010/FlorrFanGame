@@ -39,16 +39,15 @@
     // Spawn our first mob: a bee at the world origin.
     const bee = new Entity({ x: 0, y: 0, mobType: MobType.BEE, rarity: Rarity.SUPER });
     grid.insert(bee);
-    const entities = [bee]; // the world's entity list (until the manager exists)
 
     // Simple camera: show `gameWidth × gameHeight` world units, centred at the
     // origin (so the bee sits dead center). Aspect matches the screen.
     const camera = { x: 0, y: 0, width: view.gameWidth, height: view.gameHeight };
 
-    // Loop: step the simulation, then render. Pixi's ticker drives the render
-    // rate; `step` gets the frame delta in seconds.
-    view.app.ticker.add((ticker) => {
-      game.step(ticker.deltaMS / 1000, entities);
+    // Loop: step the simulation (self-queries the active region from the camera),
+    // then render. No player yet, so the lone bee just sits there.
+    view.app.ticker.add(() => {
+      game.step(camera, null);
       view.draw(grid, camera);
     });
   </script>

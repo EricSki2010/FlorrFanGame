@@ -27,6 +27,9 @@
  * @typedef {Object} Collision
  * @property {CollisionEntity} a
  * @property {CollisionEntity} b
+ * @property {number} overlap How deep they penetrate: `(ra + rb) - distance`.
+ * @property {number} nx Unit contact normal x, pointing from `a` toward `b`.
+ * @property {number} ny Unit contact normal y, pointing from `a` toward `b`.
  */
 
 // 2^26. Entity ids must stay below this, and ID_SPAN^2 (~4.5e15) stays under
@@ -125,12 +128,26 @@ export class Collisions {
         if (checked.has(key)) continue;
         checked.add(key);
 
-        // Narrowphase: overlap when (ra + rb) > distance. Squared, no sqrt.
+        // Narrowphase: overlap when (ra + rb) > distance. Squared check first
+        // (no sqrt for non-collisions); sqrt only for the few real hits, where we
+        // also need the penetration depth + contact normal.
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const r = ra + b.collisionRadius;
-        if (dx * dx + dy * dy < r * r) {
-          results.push({ a, b });
+        const d2 = dx * dx + dy * dy;
+        if (d2 < r * r) {
+          let dist = Math.sqrt(d2);
+          let nx, ny;
+          if (dist > 1e-9) {
+            nx = dx / dist;
+            ny = dy / dist;
+          } else {
+            // Coincident centers — pick an arbitrary axis to push along.
+            dist = 0;
+            nx = 1;
+            ny = 0;
+          }
+          results.push({ a, b, overlap: r - dist, nx, ny });
         }
       }
     }

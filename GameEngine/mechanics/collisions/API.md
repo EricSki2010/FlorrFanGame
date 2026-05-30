@@ -22,6 +22,10 @@ A detected colliding pair, as returned by `detect`:
 
 - `a: CollisionEntity`
 - `b: CollisionEntity`
+- `overlap: number` — penetration depth, `(ra + rb) - distance` (how deep they're in).
+- `nx, ny: number` — unit contact normal pointing from `a` toward `b`.
+
+(`a` is always the entity from `detect`'s outer loop, so the normal direction is stable per hit.)
 
 ---
 

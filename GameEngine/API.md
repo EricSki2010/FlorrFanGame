@@ -26,7 +26,17 @@ Entry point for the simulation. Exposes the subsystems as named properties.
 - `mechanics: Mechanics` — rules/simulation subsystem. See [`mechanics/API.md`](mechanics/API.md).
 
 ### Methods
-- `step(dt, entities) → Collision[]` — advance **this** world's simulation one tick. Each world instance steps independently (its own grid + mechanics). Phases: movement/AI *(TODO)* → grid sync *(via `Entity.moveTo`)* → collision detection *(implemented)* → response *(TODO)*. `dt` is seconds since the last step (unused until movement exists); `entities` is passed in for now (the entity manager will supply it later).
+- `step(camera, player = null) → Collision[]` — advance **this** world's simulation one tick. Each world instance steps independently (its own grid + mechanics). Pipeline:
+  1. **Active set** — query the grid for entities within `ACTIVE_MARGIN`× (1.5×) the `camera` rect, so just-off-screen things still simulate.
+  2. **Retarget** every `RETARGET_INTERVAL` (10) steps — currently only the `player` is a candidate, picked if within an entity's `range`.
+  3. **Collision detection** — penetration + contact normal.
+  4. **Knockback queue** — each entity shoved away from the other by `(other.density / self.density) × overlap × KNOCKBACK_SCALE`. Accumulated, kept separate from intended movement; only applied to active entities.
+  5. **Intended movement** — each entity adds an impulse toward its target at its (rarity-scaled) `speed`.
+  6. **Integrate** intended movement + knockback → new positions (grid synced via `moveTo`).
+  7. **Clear knockback** (instantaneous, per-step).
+  8. **Decay** intended movement (zero below `MOVE_THRESHOLD`, else ×`MOVE_DECAY`).
+
+  Tuning constants (`ACTIVE_MARGIN`, `RETARGET_INTERVAL`, `KNOCKBACK_SCALE`, `MOVE_THRESHOLD`, `MOVE_DECAY`) are placeholders at the top of `GameEngine.js`.
 
 ---
 
