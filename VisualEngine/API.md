@@ -5,6 +5,7 @@ The central coordinator for the game's visual subsystem. Other parts of the app 
 Subsystem folders:
 - `geometry/` — drawable shape construction (e.g. `circleBody`). See [`geometry/API.md`](geometry/API.md).
 - `view/` — the PixiJS app/stage + camera + per-frame draw. See [`view/API.md`](view/API.md).
+- `textures/` — per-texture visual metadata (offset + sizing + rotation), keyed by image path. See [`textures/API.md`](textures/API.md).
 - `shaders/` *(planned, maybe unused)* — custom GPU shaders. See [`shaders/API.md`](shaders/API.md).
 
 > **World state lives in `GameEngine.memory`**, not here. The spatial grid is *game* state; the view receives it to draw from but doesn't own it. (This keeps the visual engine purely a renderer — a headless server runs `GameEngine` with no `VisualEngine` at all.)

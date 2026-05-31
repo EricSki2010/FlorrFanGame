@@ -2,10 +2,10 @@
 // with within-frame pair dedup and deferred (return-a-list) dispatch.
 //
 // Design notes (the reasoning behind the choices here):
-//   - An entity's `collisionPoints` land it in MULTIPLE grid cells, so the same
-//     pair (A, B) surfaces many times in a sweep. We dedup with an integer-keyed
-//     Set of ordered id pairs — this kills the A-vs-B / B-vs-A duplicate AND the
-//     multi-cell duplicate in one structure.
+//   - An entity spans MULTIPLE grid cells (it's indexed by its bounding box), so
+//     the same pair (A, B) surfaces many times in a sweep. We dedup with an
+//     integer-keyed Set of ordered id pairs — this kills the A-vs-B / B-vs-A
+//     duplicate AND the multi-cell duplicate in one structure.
 //   - The pair key is a NUMBER, not a string, so there's no per-pair allocation
 //     (string keys would churn the GC, which is what actually causes stutter).
 //   - Narrowphase compares SQUARED distances, so no sqrt per pair.
@@ -15,9 +15,9 @@
 //     returned list; it lives elsewhere.
 
 /**
- * The shape an entity must have to take part in collision.
- * (It also needs `collisionPoints` so the grid can index it — that's the grid's
- * concern, handled wherever entities are inserted/updated.)
+ * The shape an entity must have to take part in collision. The grid indexes it
+ * by the same `x`/`y`/`collisionRadius` (as a bounding box), so there's nothing
+ * else to maintain.
  *
  * @typedef {Object} CollisionEntity
  * @property {number} x               World-space center x.
@@ -82,13 +82,14 @@ export class Collisions {
    * bounding box (broadphase), skip any pair already handled this frame, then
    * circle-overlap test the rest (narrowphase). Returns the colliding pairs.
    *
-   * Broadphase correctness note: this relies on each entity's `collisionPoints`
-   * adequately covering its circle relative to the grid's cell size (or cells
-   * being at least as large as the biggest entity). Two overlapping circles
-   * whose points don't share a cell would be missed — same size/cell trade-off
-   * we discussed.
+   * Broadphase is exact: the grid indexes every entity by its `center ±
+   * collisionRadius` bounding box, and overlapping circles always have
+   * overlapping AABBs, so a colliding pair always shares ≥1 cell — no size/cell
+   * trade-off. (`entities` may be a subset of what's in the grid, e.g. only the
+   * awake/scheduled ones; sleeping neighbours are still found via the grid.)
    *
-   * @param {CollisionEntity[]} entities The authoritative entity list to sweep.
+   * @param {CollisionEntity[]} entities The entity list to sweep (broadphase
+   *   initiators — typically the awake/scheduled subset of the active set).
    * @param {import("../../memory/SpatialGrid.js").SpatialGrid} grid
    *   The spatial index to broadphase against (e.g. `GameEngine.shared.memory.worldMap`).
    * @returns {Collision[]} Colliding pairs. NOTE: this is a reused array — read

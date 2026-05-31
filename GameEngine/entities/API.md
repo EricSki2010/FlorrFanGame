@@ -1,6 +1,6 @@
 # entities/ — API Reference
 
-The game's entities — positioned circles that carry the data every other subsystem reads: `x`/`y` and `collisionRadius` (for `mechanics/collisions`), `collisionPoints` (for the game engine's `SpatialGrid`), and `display` (its Pixi object, for the view).
+The game's entities — positioned circles that carry the data every other subsystem reads: `x`/`y` and `collisionRadius` (for `mechanics/collisions` **and** the game engine's `SpatialGrid`, which indexes by the bounding box), and `display` (its Pixi object, for the view).
 
 One class with a `kind` tag rather than a deep hierarchy, so every entity shares the same hidden class — keeping property access fast in the hot collision/AI loops.
 
@@ -8,7 +8,8 @@ Files:
 - `Entity.js` — the `Entity` class.
 - `MobVariety.js` — per-mob-species data (`MobType` enum, texture / size / density / speed / range / per-rarity scale).
 - `Rarity.js` — shared rarity tiers + `rarityTier` helper (its own module so `Entity` and `MobVariety` don't import each other).
-- `Targeting.js` — *(empty stub)* future home of targeting logic (how an entity picks its `target` point).
+- `Disposition.js` — the `Disposition` enum (its own module for the same no-cycle reason; re-exported from `Entity`).
+- `Targeting.js` — targeting logic: `updateTargets(entities)` picks each seeker's target point.
 
 Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entity → Rarity`.
 
@@ -18,48 +19,51 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 **File:** `Entity.js`
 
 ### Constructor
-- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, angle = 0, momentum = 0, direction = 0, id? })` — creates an entity and its `collisionPoints` (allocated once here). `id` defaults to a unique local counter; pass one for a server-assigned id.
+- `new Entity({ x = 0, y = 0, kind = "mob", rarity = "common", mobType = null, disposition = "neutral", ownerId = null, angle = 0, momentum = 0, direction = 0, id? })` — creates an entity. `id` defaults to a unique local counter; pass one for a server-assigned id.
   - **If `mobType` is set** (a `MobType`): this is a mob — `collisionRadius` and `texture` come from `MobVariety` (keyed by species + rarity).
   - **If `mobType` is null**: `collisionRadius` uses the generic `Entity.radiusFor(kind, rarity)` and `texture` is `null` (e.g. the player, which draws via `circleBody`).
 
 ### Static
+- `Entity.spawn(entityName, rarity = "common", pos = {x:0,y:0}, grid?) → Entity` — one-call mob spawn: builds an `Entity` for the species + rarity at `pos`, and (when a `grid` is passed) `insert`s it so collision/AI/the view see it. The convenience form of `new Entity(...)` + `grid.insert(...)`. `entityName` is a `MobType` (its enum values *are* their string ids, so the constant or the raw id work identically). Disposition is inherited from the mob type — construct directly to override. Omit `grid` to build-and-position without registering. The grid is passed in (not reached for) to keep `Entity` decoupled from world state and avoid an import cycle with `GameEngine`.
 - `Entity.radiusFor(kind, rarity) → number` — generic sizing for **non-mob** kinds. Edit `BASE_RADIUS` / `RARITY_GROWTH` in `Entity.js` to retune. (Mobs size from `MobVariety` instead.)
 - `RARITY` (re-exported from `Rarity.js`) — rarity tiers, lowest → highest.
-- `Disposition` (exported) — frozen-object enum: `HOSTILE` / `NEUTRAL` / `PASSIVE`.
+- `Disposition` (re-exported from `Disposition.js`) — frozen-object enum: `HOSTILE` / `NEUTRAL` / `PASSIVE` / `ALLIED` (players/pets — the side mobs target).
 
 ### Properties
 - `id: number` — unique **instance** id (this entity, not its species — distinct from `kind`/`mobType`). Network-stable; auto-assigned from a local counter, or pass `{ id }` to use a server-assigned one.
 - `x: number`, `y: number` — world-space center.
-- `angle: number` — facing/rotation in radians. **Visual only** — collision circles are rotation-invariant, so it never affects `collisionPoints` or `detect`. The view applies it as `sprite.rotation`.
+- `angle: number` — facing/rotation in radians. Collision circles are rotation-invariant, so it never affects grid placement or `detect` — the view renders it as `sprite.rotation`. `GameEngine.step` sets it to `direction` while the entity is intending to move, so sprites face their heading; a resting/knocked-back entity keeps its last facing.
 - `momentum: number` — intended-movement magnitude ("wanting to move"; 0 = at rest).
 - `direction: number` — intended-movement heading in radians, independent of `angle` (the visual facing). Velocity components are `momentum·cos(direction)`, `momentum·sin(direction)`.
 - `knockbackX, knockbackY: number` — per-step knockback accumulator (cartesian), kept **separate** from intended movement. Summed during collision response, applied, then cleared each step.
 - `density: number` — mass-like value driving collision push ratios (denser shoves more). Derived; rarity-scaled.
 - `speed: number` — movement magnitude applied per step toward a target. Derived; rarity-scaled.
-- `range: number` — target-detection range. Derived (mobs from `MobVariety`).
+- `range: number` — detection range, **derived from size**: `collisionRadius × rangeMult` (~10×, per-type from `MobVariety`). So bigger mobs detect farther. Targeting applies a ×1.5 bonus for hostiles.
 - `target: {x, y}` — AI target **point** (always an x/y, not an entity). Reused/mutated, so retargeting allocates nothing.
 - `hasTarget: boolean` — whether `target` is currently active (movement only seeks when true).
 - `kind: string` — broad type tag (`"player"`, `"mob"`, `"petal"`, …).
 - `rarity: string` — one of `RARITY`.
 - `mobType: string | null` — mob species (a `MobType`) when this is a mob, else `null`.
-- `disposition: string` — behaviour toward the player, one of `Disposition` (`HOSTILE` / `NEUTRAL` / `PASSIVE`). Defaults to neutral.
-- `collisionRadius: number` — **derived**; from `MobVariety` for mobs, else `Entity.radiusFor`. Read every frame by collision.
+- `disposition: string` — allegiance/behaviour, one of `Disposition` (`HOSTILE` / `NEUTRAL` / `PASSIVE` / `ALLIED`). For mobs, **defaults to the mob type's disposition** (from `MobVariety`); non-mobs default to neutral; an explicit arg overrides.
+- `aggroed: boolean` — in-combat flag. Hostile mobs seek regardless; a neutral mob only seeks once this is set (e.g. by being attacked). `Targeting` clears it after ~5s with no target in range (the mob gives up — hostiles leash back to base range, neutrals stop seeking).
+- `lastTargetStep: number` — step at which a target was last in range; the aggro give-up timer's reference point (see `Targeting`).
+- `ownerId` — controller id (a connection/player id) when input-driven, else `null`. Set by `mechanics/inputs`; links a player entity to its controller.
+- `collisionRadius: number` — **derived**; from `MobVariety` for mobs, else `Entity.radiusFor`. Read every frame by collision **and** the grid (it indexes by the `center ± collisionRadius` bounding box).
 - `texture: string | null` — sprite texture (mobs) or `null` (non-mobs).
-- `collisionPoints: {x, y}[]` — points driving grid-cell membership. **Allocated once** in the constructor and **mutated in place** on every move — never reallocated, so moving stays allocation-free.
 - `display` — the entity's Pixi display object; `null` until the view builds it on first sight, then cached here.
 
 ### Methods
-- `setPosition(x, y)` — set position + refresh `collisionPoints`, **without** touching any grid. Use for initial placement / spawning before insertion.
-- `moveTo(x, y, grid)` — move an entity that is already in `grid`, keeping it in sync. Uses **remove-before-mutate** (`grid.remove` against the old points → rewrite points in place → `grid.insert`), so it allocates nothing and you can't forget to re-index.
+- `setPosition(x, y)` — set position **without** touching any grid. Use for initial placement / spawning before insertion (the grid reads `x`/`y` at insert time).
+- `moveTo(x, y, grid)` — move an entity that is already in `grid`, keeping it in sync: sets the position, then `grid.update(this)` re-indexes it — but only if the move crossed a cell boundary (the grid tracks each object's cells, so a small in-cell move is a cheap no-op). No points to rewrite.
 - `addMovement(dir, magnitude)` — add a movement impulse to `momentum`/`direction` (polar add; impulses from different directions combine correctly).
 - `addKnockback(x, y)` — accumulate cartesian knockback (separate from intended movement).
 - `decayMovement(threshold, factor)` — zero `momentum` below `threshold`, else scale it by `factor` (friction).
-- `retarget(candidate)` — aim `target` at `candidate`'s point if within `range` (and not self), setting `hasTarget`; else clear `hasTarget`. Stores only the position. *Placeholder until `Targeting.js` takes over.*
+
+(Targeting now lives in `Targeting.js` — see below — not on the entity.)
 
 ### Notes
-- **Point coverage:** `collisionPoints` fills the whole disk as **concentric rings** — a center point, the **edge ring** at `radius` sampled finely (every `EDGE_SPACING` = 20, since the edge is where circles actually touch), and **interior rings** every `RING_SPACING` (64) inward sampled coarsely (every `POINT_SPACING` = 100, enough for cell coverage). Because the mesh is spaced under the 128 cell size in both directions, the entity is registered in **every** cell it overlaps — including interior cells — so even entities larger than a cell (and small entities fully inside large ones) are found by broadphase. Inner rings have fewer points. Offset arrays are cached and shared by radius.
-- **Tied to cell size:** `RING_SPACING`/`POINT_SPACING` assume the 128 grid; keep both < the cell size if you change it (`cell/2` for rings is a safe choice).
-- **Radius changes** are picked up on the next `setPosition`/`moveTo`. Point *count/layout* is fixed at construction.
+- **Grid membership** is by bounding box: the grid registers each entity in every cell `center ± collisionRadius` overlaps (see `memory/API.md`). This is exact for circles — any two overlapping circles share at least one cell — so broadphase never misses a pair regardless of entity size vs cell size.
+- **Radius changes** are picked up on the next `setPosition`/`moveTo` (the grid recomputes the cell-range from the live `collisionRadius`).
 
 ---
 
@@ -69,16 +73,27 @@ Dependency direction (no cycles): `Entity → MobVariety → Rarity`, and `Entit
 Per-mob-species data, keyed by `MobType`.
 
 - `MobType` — frozen-object "enum" of species (`BABY_ANT`, `HORNET`, `ROCK`, …).
-- `mobVariety(type) → { texture, initialSize, rarityScale }` — the `switch` returning a species' sprite texture, base collision radius, and per-rarity multiplier array (indexed by `RARITY` tier). Unknown types fall to a `default`.
-- `mobVariety(type) → { texture, initialSize, density, speed, range, rarityScale }`.
+- `mobVariety(type) → { texture, initialSize, density, speed, rangeMult, disposition, rarityScale }` — the `switch` returning a species' full stat block. Unknown types fall to a `default`.
 - `mobCollisionRadius(type, rarity) → number` — `initialSize × rarityScale[tier]`.
 - `mobDensity(type, rarity) → number` — base density, rarity-scaled (denser at higher tiers).
 - `mobSpeed(type, rarity) → number` — base speed, rarity-scaled.
-- `mobRange(type) → number` — target-detection range (not rarity-scaled).
+- `mobRangeMult(type) → number` — detection-range multiplier (× collision radius). `0` = inert (never detects).
+- `mobDisposition(type) → string` — the type's default `Disposition` (a spawned mob inherits it unless overridden).
 - `mobTexture(type) → string`.
 - `allMobTextures() → string[]` — every unique mob texture path (+ fallback); the manifest the view preloads via `loadTextures()`.
 
 > All textures / sizes / scale curves are **placeholders** — tune each `case`.
+
+---
+
+## `Targeting`
+**File:** `Targeting.js`
+
+- `updateTargets(entities, step)` — for each **seeker** among `entities` (a mob that is `HOSTILE`, or any `aggroed` mob; never `PASSIVE`/`ALLIED`), find the nearest `ALLIED` entity whose collision circle is within detection range and set it as the seeker's target (`target` point + `hasTarget` + `aggroed`, and stamp `lastTargetStep = step`); else clear `hasTarget`.
+  - Detection range = the entity's `range`, **×1.5 for hostiles**. "In range" means `dist ≤ range + ally.collisionRadius`.
+  - Neutral mobs only seek once `aggroed` (detection effectively off until provoked).
+  - **Aggro times out:** a seeker that goes `AGGRO_TIMEOUT_STEPS` (≈5s at 60 ticks/s) without a target in range clears `aggroed` — a hostile leashes back to base range, a provoked neutral stops seeking. The timer (`lastTargetStep`) resets on every reacquire, so a mob still in combat never times out. Time is counted in **steps** (the sim is tick-based, no `dt`); `step` is `GameEngine._stepCount`.
+  - Called from `GameEngine.step` every `RETARGET_INTERVAL` steps, over each region's active set (including sleeping mobs, so they can wake or time out).
 
 ---
 

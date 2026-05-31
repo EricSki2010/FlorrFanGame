@@ -11,6 +11,7 @@
 // Requires PixiJS loaded as a global `PIXI` before any method that touches it.
 
 import { allMobTextures } from "../../GameEngine/entities/MobVariety.js";
+import { textureMeta } from "../textures/TextureMeta.js";
 
 const GAME_LONG = 2000; // gameMeasure units along the longer screen axis
 
@@ -94,7 +95,13 @@ export class ViewSubsystem {
    */
   async load(paths) {
     for (const path of paths) {
-      this._textures.set(path, await PIXI.Assets.load(path));
+      try {
+        this._textures.set(path, await PIXI.Assets.load(path));
+      } catch (err) {
+        // A missing/failed texture must NOT abort the rest — it just falls back
+        // to the white placeholder. (e.g. only some art exists yet.)
+        console.warn("texture failed to load (using placeholder):", path);
+      }
     }
   }
 
@@ -145,7 +152,9 @@ export class ViewSubsystem {
       sprite.visible = true;
       sprite.x = e.x; // sprites placed at world coords; `world` transform → pixels
       sprite.y = e.y;
-      sprite.rotation = e.angle; // radians; visual only
+      // radians; visual only. `_texRotation` is the texture's baked-in facing
+      // offset (0 for circleBody/player), set once in `_spriteFor`.
+      sprite.rotation = e.angle + (sprite._texRotation || 0);
       next.add(sprite);
     }
 
@@ -163,23 +172,37 @@ export class ViewSubsystem {
   }
 
   /**
-   * Get (or lazily create + cache) the sprite for an entity, stored on
-   * `entity.display`. Sprite is scaled so its drawn diameter matches the
-   * entity's collision diameter.
+   * Get (or lazily create + cache) the display object for an entity, stored on
+   * `entity.display`.
+   *
+   * - If the entity has a `circleBody` factory (from `geometry`), build that — a
+   *   Pixi circle drawn at its real world radius (used for the player).
+   * - Otherwise make a texture sprite, scaled so its drawn diameter matches the
+   *   entity's collision diameter.
    * @private
    */
   _spriteFor(entity) {
     if (entity.display) return entity.display;
 
-    const tex = this._texture(entity.texture);
-    const sprite = new PIXI.Sprite(tex);
-    sprite.anchor.set(0.5);
-    if (tex.width) {
-      sprite.scale.set((entity.collisionRadius * 2) / tex.width);
+    let display;
+    if (typeof entity.circleBody === "function") {
+      display = entity.circleBody(); // Pixi Container with a circle at world radius
+    } else {
+      const tex = this._texture(entity.texture);
+      const meta = textureMeta(entity.texture); // per-PNG offset + sizing
+      display = new PIXI.Sprite(tex);
+      // Offset via the anchor (normalized → scales with the sprite): a +x offset
+      // shifts the art right, so the anchored point moves left of center.
+      display.anchor.set(0.5 - meta.offsetX, 0.5 - meta.offsetY);
+      if (tex.width) {
+        // Drawn diameter = collision diameter × the texture's scale factor.
+        display.scale.set((entity.collisionRadius * 2 * meta.scale) / tex.width);
+      }
+      display._texRotation = meta.directionOffset; // read each frame in `draw`
     }
-    this.world.addChild(sprite);
-    entity.display = sprite;
-    return sprite;
+    this.world.addChild(display);
+    entity.display = display;
+    return display;
   }
 
   /**

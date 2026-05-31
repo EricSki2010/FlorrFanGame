@@ -40,8 +40,9 @@ Draws one frame: queries `grid` for entities inside the `camera` world rect, cre
 
 ### Notes
 - Sprites are placed at world coordinates inside `world`; the `world` container's scale/position implements the camera, mapping world → pixels.
-- Each sprite's `rotation` is set from `entity.angle` (radians) — visual only.
-- A sprite is scaled so its drawn diameter matches the entity's collision diameter (`2 × collisionRadius`).
+- **Per-texture alignment** comes from [`textures/TextureMeta.js`](../textures/API.md), keyed by texture path: `scale` (drawn diameter = collision diameter × scale), `offsetX`/`offsetY` (anchor nudge, fraction of drawn size), and `directionOffset` (facing correction added to `entity.angle`). Defaults reproduce plain centered + collision-sized rendering, so untuned art is unaffected.
+- Each sprite's `rotation` is `entity.angle + textureMeta.directionOffset` (radians) — visual only. The facing offset is cached on the sprite as `_texRotation`.
+- A sprite is scaled so its drawn diameter matches the entity's collision diameter (`2 × collisionRadius`) times the texture's `scale`.
 - Missing/not-yet-loaded textures fall back to `PIXI.Texture.WHITE` — preload real art with `load()`.
 
 ### Still needed to spawn a mob on screen

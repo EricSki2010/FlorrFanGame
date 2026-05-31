@@ -6,22 +6,24 @@
  * Swift used a `GridPlaceable: AnyObject` protocol so the grid could store
  * objects *by reference*. JS objects are already reference types, so there is
  * no protocol to declare — an object is "grid placeable" simply by exposing a
- * `collisionPoints` property:
+ * position and a radius:
  *
- *   - `collisionPoints` — an array of world-space points (`{x, y}`) the object
- *     occupies. These drive which cells the object is inserted into and are
- *     also used by collision logic. Every distinct cell that contains at least
- *     one collision point will hold a reference to the object.
+ *   - `x`, `y` — world-space center.
+ *   - `collisionRadius` — circle radius. The grid registers the object in every
+ *     cell its axis-aligned bounding box (`center ± collisionRadius`) overlaps.
  *
- * This file documents that shape via the `GridPlaceable` typedef below; there
- * is nothing to import.
+ * (Earlier versions indexed by a `collisionPoints` array sampled around the
+ * disk; that's gone — the AABB cell range is exact for circles, costs nothing
+ * to recompute on a move, and doesn't depend on point spacing vs cell size.)
  *
  * @typedef {Object} Point
  * @property {number} x
  * @property {number} y
  *
  * @typedef {Object} GridPlaceable
- * @property {Point[]} collisionPoints World-space points the object occupies.
+ * @property {number} x               World-space center x.
+ * @property {number} y               World-space center y.
+ * @property {number} collisionRadius Circle radius driving cell membership.
  */
 
 /**
@@ -33,15 +35,30 @@
  */
 
 /**
+ * A cell-index range an object currently occupies — `[minCx..maxCx] ×
+ * [minCy..maxCy]` (inclusive). One record per registered object lives in
+ * `_placement`, so the grid always knows where it put something without
+ * re-reading the (possibly already-mutated) object.
+ *
+ * @typedef {Object} CellRange
+ * @property {number} minCx
+ * @property {number} minCy
+ * @property {number} maxCx
+ * @property {number} maxCy
+ */
+
+/**
  * Uniform spatial hash grid for fast 2D range queries.
  *
  * World space is divided into fixed-size cells. Each object is inserted into
- * every cell that one of its `collisionPoints` falls into (deduped). Queries
+ * every cell its bounding box (`center ± collisionRadius`) overlaps. Queries
  * (e.g. "what's inside the camera's viewport?") only walk the cells the query
  * rect touches.
  *
- * Only **references** to objects are stored — there is one shared instance per
- * object regardless of how many cells it spans.
+ * Only **references** to objects are stored — one shared instance per object
+ * regardless of how many cells it spans. The grid also tracks each object's
+ * current {@link CellRange} in `_placement`, which lets `update` cheaply skip
+ * the re-index entirely when a move stays within the same cells.
  */
 export class SpatialGrid {
   /**
@@ -65,21 +82,21 @@ export class SpatialGrid {
     this._cells = new Map();
 
     /**
+     * Object → the {@link CellRange} it is currently registered under. Lets
+     * `remove`/`update` find the object's cells without recomputing from its
+     * (maybe-already-changed) state, and lets `update` detect a no-op move.
+     * @type {Map<GridPlaceable, CellRange>}
+     * @private
+     */
+    this._placement = new Map();
+
+    /**
      * Reused scratch for `query` dedup — cleared, never returned. Safe to share
      * because `query` is never re-entrant (it calls nothing that calls `query`).
      * @type {Set<GridPlaceable>}
      * @private
      */
     this._querySeen = new Set();
-
-    /**
-     * Reused scratch for `_uniqueCells` — cleared and refilled each call. Safe to
-     * share because the operations that use it (insert/remove/update/replace) run
-     * sequentially and each fully consumes the set before the next refill.
-     * @type {Set<string>}
-     * @private
-     */
-    this._cellScratch = new Set();
   }
 
   /**
@@ -95,41 +112,68 @@ export class SpatialGrid {
 
   // MARK: - Mutation
 
-  /** Insert `object` into every cell that contains one of its collision points. */
+  /** Insert `object` into every cell its bounding box overlaps. */
   insert(object) {
-    for (const key of this._uniqueCells(object.collisionPoints)) {
-      let bucket = this._cells.get(key);
-      if (bucket === undefined) {
-        bucket = [];
-        this._cells.set(key, bucket);
-      }
-      bucket.push(object);
-    }
+    const range = { minCx: 0, minCy: 0, maxCx: 0, maxCy: 0 };
+    this._writeRange(object, range);
+    this._addToCells(object, range);
+    this._placement.set(object, range);
   }
 
   /**
-   * Remove `object` from every cell its current collision points live in.
-   * Must be called *before* the object's collision points change if you plan
-   * to re-insert after moving it — otherwise the stale cells won't be cleared.
+   * Remove `object` from the grid. Uses the object's *stored* cell range, so it
+   * works regardless of whether the object's position has since changed — no
+   * "remove before you mutate" ordering to remember.
    */
   remove(object) {
-    this._removeFromCells(object, this._uniqueCells(object.collisionPoints));
+    const range = this._placement.get(object);
+    if (range === undefined) return;
+    this._removeFromRange(object, range);
+    this._placement.delete(object);
   }
 
   /**
-   * Convenience: remove from the cells the object *used to* occupy, then
-   * re-insert based on its current collision points.
+   * Re-index `object` after its position/radius changed. Recomputes the cell
+   * range and, **only if it differs from where the object is currently
+   * registered**, moves it (the common slow-mover case stays in the same cells
+   * and returns immediately — no bucket churn). Inserts if not yet present.
    * @param {GridPlaceable} object
-   * @param {Point[]} oldCollisionPoints
    */
-  update(object, oldCollisionPoints) {
-    this._removeFromCells(object, this._uniqueCells(oldCollisionPoints));
-    this.insert(object);
+  update(object) {
+    const range = this._placement.get(object);
+    if (range === undefined) {
+      this.insert(object);
+      return;
+    }
+
+    const cs = this.cellSize;
+    const r = object.collisionRadius;
+    const minCx = Math.floor((object.x - r) / cs);
+    const minCy = Math.floor((object.y - r) / cs);
+    const maxCx = Math.floor((object.x + r) / cs);
+    const maxCy = Math.floor((object.y + r) / cs);
+
+    // Same cells as last time → nothing to do (this is the cheap fast path that
+    // most moving entities hit most frames).
+    if (
+      minCx === range.minCx && minCy === range.minCy &&
+      maxCx === range.maxCx && maxCy === range.maxCy
+    ) {
+      return;
+    }
+
+    this._removeFromRange(object, range); // clear the OLD cells
+    range.minCx = minCx;
+    range.minCy = minCy;
+    range.maxCx = maxCx;
+    range.maxCy = maxCy;
+    this._addToCells(object, range); // register the NEW cells
   }
 
   /** Wipe the entire grid. */
   removeAll() {
     this._cells.clear();
+    this._placement.clear();
   }
 
   /**
@@ -139,9 +183,8 @@ export class SpatialGrid {
    * @returns {GridPlaceable[]} The objects that were removed.
    */
   replace(point, newObject) {
-    // Snapshot first: `queryAt` returns the live bucket, and `remove` now mutates
-    // buckets in place (swap-remove). Iterating the live array while removing from
-    // it would skip entries — so copy the references out before removing.
+    // Snapshot first: `queryAt` returns the live bucket and `remove` mutates
+    // buckets in place, so iterate a copy.
     const removed = this.queryAt(point).slice();
     for (let i = 0; i < removed.length; i++) {
       this.remove(removed[i]);
@@ -153,13 +196,12 @@ export class SpatialGrid {
   // MARK: - Queries
 
   /**
-   * All objects with at least one collision point in any cell the rect overlaps.
-   * Objects spanning multiple cells are returned exactly once.
+   * All objects whose cells overlap `rect`. Objects spanning multiple cells are
+   * returned exactly once.
    *
    * Allocation-free internally: the `seen` set used for dedup is reused across
    * calls. Results are written into `out` — pass your own reused array for a
-   * zero-alloc hot path; omit it and a fresh array is returned, which is the
-   * original behaviour, so existing callers are unaffected.
+   * zero-alloc hot path; omit it and a fresh array is returned.
    *
    * @param {Rect} rect
    * @param {GridPlaceable[]} [out] Destination array (cleared first). Defaults to
@@ -213,8 +255,7 @@ export class SpatialGrid {
 
   /**
    * Cell key (`"cx,cy"`) for a world-space coordinate — floors into cell indices
-   * and joins them. The string concatenation is the one remaining per-call
-   * allocation; it's kept (over numeric key packing) so cell indices stay
+   * and joins them. String keys (over numeric packing) keep cell indices
    * unbounded and negative-coordinate-safe.
    * @private
    */
@@ -225,44 +266,61 @@ export class SpatialGrid {
   }
 
   /**
-   * Distinct cell keys that contain at least one of `points`.
-   *
-   * Returns a REUSED set (`this._cellScratch`), cleared on each call — do not
-   * hold the result across another grid operation. Internal callers consume it
-   * immediately, which is why sharing it is safe.
+   * Fill `range` with the inclusive cell-index span of `object`'s bounding box
+   * (`center ± collisionRadius`).
    * @private
-   * @param {Point[]} points
-   * @returns {Set<string>}
+   * @param {GridPlaceable} object
+   * @param {CellRange} range
    */
-  _uniqueCells(points) {
-    const set = this._cellScratch;
-    set.clear();
-    for (let i = 0; i < points.length; i++) {
-      const p = points[i];
-      set.add(this._cellKey(p.x, p.y));
-    }
-    return set;
+  _writeRange(object, range) {
+    const cs = this.cellSize;
+    const r = object.collisionRadius;
+    range.minCx = Math.floor((object.x - r) / cs);
+    range.minCy = Math.floor((object.y - r) / cs);
+    range.maxCx = Math.floor((object.x + r) / cs);
+    range.maxCy = Math.floor((object.y + r) / cs);
   }
 
   /**
+   * Register `object` in every cell of `range`.
    * @private
    * @param {GridPlaceable} object
-   * @param {Set<string>} targetKeys
+   * @param {CellRange} range
    */
-  _removeFromCells(object, targetKeys) {
-    for (const key of targetKeys) {
-      const bucket = this._cells.get(key);
-      if (bucket === undefined) continue;
-      // Swap-remove in place — a cell's order doesn't matter, so overwrite the
-      // object with the last element and drop the tail. No new array. Assumes at
-      // most one occurrence per bucket, which `_uniqueCells`' dedup guarantees.
-      const i = bucket.indexOf(object);
-      if (i !== -1) {
-        bucket[i] = bucket[bucket.length - 1];
-        bucket.pop();
+  _addToCells(object, range) {
+    for (let cx = range.minCx; cx <= range.maxCx; cx++) {
+      for (let cy = range.minCy; cy <= range.maxCy; cy++) {
+        const key = cx + "," + cy;
+        let bucket = this._cells.get(key);
+        if (bucket === undefined) {
+          bucket = [];
+          this._cells.set(key, bucket);
+        }
+        bucket.push(object);
       }
-      if (bucket.length === 0) {
-        this._cells.delete(key);
+    }
+  }
+
+  /**
+   * Unregister `object` from every cell of `range` (swap-remove in place — cell
+   * order doesn't matter, and `_addToCells` registers each object at most once
+   * per cell).
+   * @private
+   * @param {GridPlaceable} object
+   * @param {CellRange} range
+   */
+  _removeFromRange(object, range) {
+    for (let cx = range.minCx; cx <= range.maxCx; cx++) {
+      for (let cy = range.minCy; cy <= range.maxCy; cy++) {
+        const key = cx + "," + cy;
+        const bucket = this._cells.get(key);
+        if (bucket === undefined) continue;
+        const i = bucket.indexOf(object);
+        if (i !== -1) {
+          bucket[i] = bucket[bucket.length - 1];
+          bucket.pop();
+        }
+        if (bucket.length === 0) this._cells.delete(key);
       }
     }
   }

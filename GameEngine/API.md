@@ -9,6 +9,9 @@ Subsystem folders:
 - `mechanics/` — rules/simulation logic (collision detection today; movement AI, damage, spawning later). See [`mechanics/API.md`](mechanics/API.md).
 - `entities/` — entity definitions (`Entity`, `MobVariety`, `Rarity`). See [`entities/API.md`](entities/API.md).
 
+Top-level helpers:
+- `Regions.js` — sim-region rectangles + the center-containment merge `step` uses. See [Regions](#regions) below.
+
 > Modules are native ES modules — import them directly (`<script type="module">`, no build step).
 
 ---
@@ -26,17 +29,41 @@ Entry point for the simulation. Exposes the subsystems as named properties.
 - `mechanics: Mechanics` — rules/simulation subsystem. See [`mechanics/API.md`](mechanics/API.md).
 
 ### Methods
-- `step(camera, player = null) → Collision[]` — advance **this** world's simulation one tick. Each world instance steps independently (its own grid + mechanics). Pipeline:
-  1. **Active set** — query the grid for entities within `ACTIVE_MARGIN`× (1.5×) the `camera` rect, so just-off-screen things still simulate.
-  2. **Retarget** every `RETARGET_INTERVAL` (10) steps — currently only the `player` is a candidate, picked if within an entity's `range`.
-  3. **Collision detection** — penetration + contact normal.
-  4. **Knockback queue** — each entity shoved away from the other by `(other.density / self.density) × overlap × KNOCKBACK_SCALE`. Accumulated, kept separate from intended movement; only applied to active entities.
-  5. **Intended movement** — each entity adds an impulse toward its target at its (rarity-scaled) `speed`.
-  6. **Integrate** intended movement + knockback → new positions (grid synced via `moveTo`).
-  7. **Clear knockback** (instantaneous, per-step).
-  8. **Decay** intended movement (zero below `MOVE_THRESHOLD`, else ×`MOVE_DECAY`).
+- `step(regions) → Collision[]` — advance **this** world's simulation one tick. Call it **once per tick** with the render region(s) to simulate. `regions` is a single rect or an array of them (center + size, world units); a server passes one per player. The engine takes *render regions*, not a camera — it's headless. Allied targets (player/pets) are discovered per region, so no separate player arg.
 
-  Tuning constants (`ACTIVE_MARGIN`, `RETARGET_INTERVAL`, `KNOCKBACK_SCALE`, `MOVE_THRESHOLD`, `MOVE_DECAY`) are placeholders at the top of `GameEngine.js`.
+  First, **`mergeRegions`** (see [`Regions.js`](#regions)) folds overlapping regions together: a region whose **center** lies inside another collapses into their bounding box (transitively). The result is a set of **disjoint** boxes, each then simulated **independently** — so spread-out players cost the same as stepping each alone, while players piled in one spot become a single sweep instead of N overlapping ones. The merge adds a little un-rendered area at the box's corners; that's deliberately cheap (it falls in the cold LOD tier below).
+
+  Per merged box:
+  1. **Active set** — grid query of the box expanded by `ACTIVE_MARGIN` (1.5×) so just-outside things still simulate. A per-tick `processed` set skips anything an earlier box already handled, so no entity is stepped twice.
+  2. **Retarget** every `RETARGET_INTERVAL` (10) steps via `entities/Targeting.js` `updateTargets`, over the box's whole active set — so a sleeping mob can wake when an ally nears.
+  3. **Sim set** — the subset actually simulated: **awake** (`momentum > 0`, has knockback, or `hasTarget` — at-rest mobs skipped, #2) **and scheduled** — **hot** (inside one of the box's `sources`, i.e. a real render region) runs every step; **cold** (only in the margin/merge-padding) runs every `LOD_STRIDE` steps, phase-offset by `id` (#5). Steps 4–8 run over this subset; the grid still indexes all active entities, so movers still collide with sleepers.
+  4. **Collision detection** over the sim set — penetration + contact normal.
+  5. **Knockback queue** — each entity shoved away from the other by `(other.density / self.density) × overlap × KNOCKBACK_SCALE`. Lands on any active entity (waking a struck sleeper next step).
+  6. **Intended movement** — each sim entity adds an impulse toward its target at its (rarity-scaled) `speed`.
+  7. **Integrate** intended movement + knockback → new positions (grid synced via `moveTo`). Cold entities integrate `LOD_STRIDE`× the intended velocity to cover the steps they sat out, so average speed is unchanged.
+  8. **Clear knockback** + **decay** intended movement (zero below `MOVE_THRESHOLD`, else ×`MOVE_DECAY`).
+
+  Three performance levers, all correctness-preserving on screen:
+  - **Sleep** (#2): at-rest mobs are excluded from the collision sweep and movement entirely — a world of mostly-idle mobs costs almost nothing beyond the active-set query.
+  - **LOD** (#5): entities outside every real render region (the margin + merge-padding) simulate at `1/LOD_STRIDE` rate. Entities inside a render region always run full-rate, so the throttle is invisible.
+  - **Region merge**: clustered players share one sweep instead of double-processing the overlap.
+
+  > **Call once per tick.** LOD scheduling advances with the step counter, so call `step(allRegions)` a single time per tick — not once per player (that both double-processes overlaps and skews the LOD phase).
+
+  Tuning constants (`ACTIVE_MARGIN`, `RETARGET_INTERVAL`, `KNOCKBACK_SCALE`, `MOVE_THRESHOLD`, `MOVE_DECAY`, `HOT_MARGIN`, `LOD_STRIDE`) are placeholders at the top of `GameEngine.js`.
+
+---
+
+## Regions
+**File:** `Regions.js`
+
+The rectangles `step` simulates inside — one per client render area (the engine is headless, so it thinks in *regions*, not cameras). Rects are **center-based**: `{ x, y, width, height }` with `(x, y)` the center.
+
+- `mergeRegions(regions) → box[]` — fold overlapping regions together: if one region's **center** lies inside another, replace the pair with their bounding box, to a fixpoint (chains collapse transitively). Returns **disjoint** boxes; each carries `sources` — the original region(s) it covers, which `step` uses to tell a real render area from the box's cheap merge-padding corners. Pure (inputs untouched).
+- `pointInRegion(px, py, r, slack?) → boolean` — is a point inside a center-based rect (optional `slack` multiplier on the extents, e.g. `1.05` for edge hysteresis)?
+- `pointInAnyRegion(px, py, regions, slack?) → boolean` — any-of helper; `step` uses it for the hot/cold LOD test.
+
+Closer players save more: the more the regions overlap, the more redundant sweeping the merge removes. Far-apart players don't merge and are simulated independently, costing the same as if each were alone.
 
 ---
 

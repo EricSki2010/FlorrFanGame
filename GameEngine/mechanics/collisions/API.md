@@ -10,9 +10,9 @@ Not a class — the duck-typed shape an entity must have to take part in collisi
 
 - `x: number` — world-space center x.
 - `y: number` — world-space center y.
-- `collisionRadius: number` — circle radius used for the overlap test.
+- `collisionRadius: number` — circle radius used for the overlap test (and, for the `SpatialGrid`, the bounding box it indexes by).
 
-The entity **also** needs `collisionPoints: {x, y}[]` so the `SpatialGrid` can index it — that's the grid's concern, handled wherever entities are inserted/updated, not by this module.
+`x`/`y`/`collisionRadius` are the *only* fields collision and the grid need — there's no separate point list to maintain.
 
 ---
 
@@ -47,14 +47,14 @@ Runs one collision sweep and returns the colliding pairs.
 - **Returns** an array of `{ a, b }` pairs.
 
 How it works:
-- **Broadphase** — for each entity, queries `grid` for everything in its bounding box. A large neighbour is registered in many cells, so it's still found even though only the entity's own extent is queried.
+- **Broadphase** — for each entity in the sweep list, queries `grid` for everything in its bounding box. A large neighbour is registered in many cells (the grid indexes every entity by its full AABB), so it's still found even though only the entity's own extent is queried. The sweep list is the *awake/scheduled* subset (`GameEngine.step` skips at-rest and off-screen-throttled entities), but the grid still holds **all** active entities, so a mover is still tested against sleeping neighbours.
 - **Pair dedup** — an integer-keyed `Set` (packed ordered id pair `lo * 2²⁶ + hi`) skips any pair already handled this frame. This kills both the A-vs-B / B-vs-A duplicate **and** the multi-cell duplicate, with no per-pair allocation.
 - **Narrowphase** — overlap when `(ra + rb)² > dist²` (squared distance, no `sqrt`).
 
 ⚠️ **Notes / contracts:**
 - The returned array is **reused** across calls — read it (or copy it) before the next `detect` overwrites it.
-- `detect` only **reads** the grid; it does not insert/move/remove. The caller must keep the grid in sync (`remove → move → insert`/`update`) as entities move.
-- Broadphase correctness assumes each entity's `collisionPoints` cover its circle adequately relative to the grid's cell size (or cells ≥ the largest entity). Overlapping circles whose points share no cell would be missed — the cell-size/entity-size trade-off.
+- `detect` only **reads** the grid; it does not insert/move/remove. The caller must keep the grid in sync (`entity.moveTo` → `grid.update`) as entities move.
+- Broadphase is exact for circles: the grid indexes each entity by its `center ± collisionRadius` bounding box, and any two overlapping circles have overlapping AABBs, so they always share at least one cell. No size-vs-cell trade-off anymore.
 - Entity ids are assigned lazily and capped at ~67M distinct entities per session (2²⁶), keeping packed pair keys within `Number.MAX_SAFE_INTEGER`.
 
 #### `groupByEntity(collisions) → Map<CollisionEntity, CollisionEntity[]>`

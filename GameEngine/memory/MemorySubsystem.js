@@ -10,10 +10,14 @@ import { SpatialGrid } from "./SpatialGrid.js";
  */
 export class MemorySubsystem {
   /**
-   * @param {number} [cellSize=128] World units per grid cell. Pick something
-   *   close to your typical query size (e.g. ~camera height / a few).
+   * @param {number} [cellSize=256] World units per grid cell. Tuned for the
+   *   game's typical ~size-200 mobs: at 256 a big mob spans far fewer cells, so
+   *   moving/re-indexing it is much cheaper (benchmarked ~−73% vs 128) while the
+   *   broadphase false-positive cost stays low (you can't pack many big mobs on
+   *   screen). Drop toward ~128 if the world becomes dominated by small, densely
+   *   packed mobs instead. Rule of thumb: cellSize ≈ typical entity diameter.
    */
-  constructor(cellSize = 128) {
+  constructor(cellSize = 256) {
     /** The 2D world map. Camera viewport queries go through this. */
     this.worldMap = new SpatialGrid(cellSize);
   }

@@ -11,6 +11,7 @@ Wrapper that holds the simulation subsystems. Reachable as `GameEngine.shared.me
 
 ### Properties
 - `collisions: Collisions` — collision detection. See [`collisions/API.md`](collisions/API.md).
+- `inputs: Inputs` — player input → movement intent. See [`inputs/API.md`](inputs/API.md).
 
 ### Constructor
 - `new Mechanics()` — constructs the owned subsystems. Normally you don't call this directly; access it via `GameEngine.shared.mechanics`.

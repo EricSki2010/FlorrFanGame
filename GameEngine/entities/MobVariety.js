@@ -6,6 +6,7 @@
 // (Filename is "MobVariety" — the correct spelling of variety.)
 
 import { rarityTier } from "./Rarity.js";
+import { Disposition } from "./Disposition.js";
 
 /** Base directory for entity sprite assets — the one place to change where
  * images are loaded from. Filenames join onto this. */
@@ -38,7 +39,10 @@ export const MobType = Object.freeze({
  * @property {number} density       Mass-like value at the lowest rarity — drives
  *   how hard it pushes vs gets pushed in collisions. (Denser = shoves more.)
  * @property {number} speed         Movement magnitude per step at the lowest rarity.
- * @property {number} range         Target-detection range in world units.
+ * @property {number} rangeMult     Detection range as a MULTIPLE of collision
+ *   radius (so range scales with size). ~10 typical; 0 = never detects (inert).
+ * @property {string} disposition   Default behaviour toward the player — one of
+ *   {@link Disposition}. Used as a spawned mob's disposition unless overridden.
  * @property {number[]} rarityScale Multipliers applied to `initialSize`, indexed
  *   by {@link RARITY} tier. Length must equal `RARITY.length`.
  */
@@ -56,66 +60,76 @@ const SPEED_RARITY_GROWTH = 0.1; // +10% speed per rarity tier
  * @returns {MobVariety}
  */
 export function mobVariety(type) {
-  //                                   size  dens spd  range
+  //                                   size  dens spd  rangeMult (× radius)
   switch (type) {
     case MobType.BABY_ANT:
       return {
         texture: tex("baby_ant.png"),
-        initialSize: 55, density: 15, speed: 4, range: 600,
+        initialSize: 5, density: 15, speed: 4, rangeMult: 10,
+        disposition: Disposition.NEUTRAL,
         rarityScale: [1, 1.15, 1.35, 1.6, 2.0, 2.6, 3.4, 4.5],
       };
     case MobType.WORKER_ANT:
       return {
         texture: tex("worker_ant.png"),
-        initialSize: 75, density: 25, speed: 3.5, range: 650,
+        initialSize: 10, density: 25, speed: 3.5, rangeMult: 10,
+        disposition: Disposition.NEUTRAL,
         rarityScale: [1, 1.18, 1.4, 1.7, 2.1, 2.8, 3.7, 5.0],
       };
     case MobType.SOLDIER_ANT:
       return {
         texture: tex("soldier_ant.png"),
-        initialSize: 90, density: 35, speed: 3, range: 700,
+        initialSize: 15, density: 35, speed: 3, rangeMult: 10,
+        disposition: Disposition.HOSTILE,
         rarityScale: [1, 1.2, 1.45, 1.8, 2.3, 3.0, 4.0, 5.4],
       };
     case MobType.BEE:
       return {
         texture: tex("bug.png"), // TEMP: using bug.png for now
-        initialSize: 70, density: 20, speed: 4.5, range: 600,
+        initialSize: 20, density: 20, speed: 4.5, rangeMult: 9,
+        disposition: Disposition.NEUTRAL,
         rarityScale: [1, 1.15, 1.35, 1.65, 2.1, 2.7, 3.5, 4.6],
       };
     case MobType.HORNET:
       return {
         texture: tex("hornet.png"),
-        initialSize: 100, density: 30, speed: 4, range: 750,
+        initialSize: 30, density: 30, speed: 4, rangeMult: 11,
+        disposition: Disposition.HOSTILE,
         rarityScale: [1, 1.2, 1.5, 1.9, 2.4, 3.2, 4.2, 5.6],
       };
     case MobType.SPIDER:
       return {
-        texture: tex("spider.png"),
-        initialSize: 95, density: 40, speed: 5, range: 800,
+        texture: tex("bug.png"), // TEMP: bug.png is the hostile mob's art for now
+        initialSize: 25, density: 40, speed: 5, rangeMult: 12,
+        disposition: Disposition.HOSTILE,
         rarityScale: [1, 1.22, 1.5, 1.9, 2.45, 3.2, 4.3, 5.8],
       };
     case MobType.BEETLE:
       return {
         texture: tex("beetle.png"),
-        initialSize: 110, density: 60, speed: 2.5, range: 700,
+        initialSize: 40, density: 60, speed: 2.5, rangeMult: 8,
+        disposition: Disposition.NEUTRAL,
         rarityScale: [1, 1.25, 1.6, 2.05, 2.7, 3.6, 4.8, 6.4],
       };
     case MobType.LADYBUG:
       return {
         texture: tex("ladybug.png"),
-        initialSize: 80, density: 30, speed: 3.5, range: 650,
+        initialSize: 60, density: 30, speed: 3.5, rangeMult: 10,
+        disposition: Disposition.PASSIVE,
         rarityScale: [1, 1.18, 1.4, 1.75, 2.2, 2.9, 3.8, 5.1],
       };
     case MobType.ROCK:
       return {
         texture: tex("rock.png"),
-        initialSize: 130, density: 100, speed: 0, range: 0, // inert: doesn't move/seek
+        initialSize: 60, density: 100, speed: 0, rangeMult: 0, // inert: doesn't move/seek
+        disposition: Disposition.PASSIVE,
         rarityScale: [1, 1.3, 1.7, 2.2, 2.9, 3.9, 5.2, 7.0],
       };
     default:
       return {
         texture: tex("unknown.png"),
-        initialSize: 85, density: 30, speed: 3, range: 600,
+        initialSize: 85, density: 30, speed: 3, rangeMult: 10,
+        disposition: Disposition.NEUTRAL,
         rarityScale: [1, 1.2, 1.45, 1.75, 2.2, 2.9, 3.8, 5.0],
       };
   }
@@ -156,12 +170,23 @@ export function mobSpeed(type, rarity) {
 }
 
 /**
- * Target-detection range for a mob `type` (not rarity-scaled).
+ * Detection-range multiplier for a mob `type` (× collision radius). The entity
+ * turns this into an absolute range as `collisionRadius × rangeMult`.
  * @param {string} type One of {@link MobType}.
  * @returns {number}
  */
-export function mobRange(type) {
-  return mobVariety(type).range;
+export function mobRangeMult(type) {
+  return mobVariety(type).rangeMult;
+}
+
+/**
+ * Default disposition for a mob `type` (one of {@link Disposition}). Used as a
+ * spawned mob's disposition unless overridden at the spawn site.
+ * @param {string} type One of {@link MobType}.
+ * @returns {string}
+ */
+export function mobDisposition(type) {
+  return mobVariety(type).disposition;
 }
 
 /**
